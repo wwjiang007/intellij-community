@@ -35,9 +35,6 @@ import static com.siyeh.ig.psiutils.ControlFlowUtils.getInitializerUsageStatus;
 import static com.siyeh.ig.psiutils.Java8MigrationUtils.MapCheckCondition.fromConditional;
 import static com.siyeh.ig.psiutils.Java8MigrationUtils.extractLambdaCandidate;
 
-/**
- * @author Tagir Valeev
- */
 class CollectMigration extends BaseStreamApiMigration {
   private static final Logger LOG = Logger.getInstance(CollectMigration.class);
 
@@ -74,14 +71,15 @@ class CollectMigration extends BaseStreamApiMigration {
     PsiElement result;
     if (toReplace != null) {
       result = ct.replace(toReplace, stream);
+      terminal.cleanUp(ct);
       removeLoop(ct, loopStatement);
     }
     else {
       PsiVariable variable = terminal.getTargetVariable();
       LOG.assertTrue(variable != null);
+      terminal.cleanUp(ct);
       result = replaceInitializer(loopStatement, variable, variable.getInitializer(), stream, terminal.getStatus(), ct);
     }
-    terminal.cleanUp();
     return result;
   }
 
@@ -219,7 +217,7 @@ class CollectMigration extends BaseStreamApiMigration {
 
     public InitializerUsageStatus getStatus() { return myStatus; }
 
-    void cleanUp() {}
+    void cleanUp(CommentTracker ct) {}
 
     boolean isTrivial() {
       return generateIntermediate(new CommentTracker()).isEmpty();
@@ -586,6 +584,10 @@ class CollectMigration extends BaseStreamApiMigration {
 
     @Override
     public String generateTerminal(CommentTracker ct, boolean strictMode) {
+      return generateTerminal(ct, "toMap");
+    }
+
+    public String generateTerminal(CommentTracker ct, final String collectorName) {
       PsiExpression[] args = myMapUpdateCall.getArgumentList().getExpressions();
       LOG.assertTrue(args.length >= 2);
       String methodName = myMapUpdateCall.getMethodExpression().getReferenceName();
@@ -609,14 +611,14 @@ class CollectMigration extends BaseStreamApiMigration {
         default:
           return null;
       }
-      StringBuilder collector = new StringBuilder(".collect(" + CommonClassNames.JAVA_UTIL_STREAM_COLLECTORS + ".toMap(");
+      StringBuilder collector = new StringBuilder(".collect(" + CommonClassNames.JAVA_UTIL_STREAM_COLLECTORS + "." + collectorName + "(");
       collector.append(ct.lambdaText(myElementVariable, args[0])).append(',')
         .append(ct.lambdaText(myElementVariable, args[1])).append(',')
         .append(merger);
       PsiLocalVariable variable = Objects.requireNonNull(getTargetVariable());
       PsiExpression initializer = variable.getInitializer();
       LOG.assertTrue(initializer != null);
-      if (!isHashMap(variable)) {
+      if ("toMap".equals(collectorName) && !isHashMap(variable)) {
         collector.append(",()->").append(ct.text(initializer));
       }
       collector.append("))");
@@ -669,9 +671,9 @@ class CollectMigration extends BaseStreamApiMigration {
     }
 
     @Override
-    public void cleanUp() {
-      myDownstream.cleanUp();
-      myStatement.delete();
+    public void cleanUp(CommentTracker ct) {
+      myDownstream.cleanUp(ct);
+      ct.delete(myStatement);
     }
 
     @Override
@@ -753,12 +755,12 @@ class CollectMigration extends BaseStreamApiMigration {
     }
 
     @Override
-    public void cleanUp() {
+    public void cleanUp(CommentTracker ct) {
       PsiLocalVariable variable = myUpstream.getTargetVariable();
       if (variable != null && myUpstream.getStatus() != ControlFlowUtils.InitializerUsageStatus.AT_WANTED_PLACE) {
-        variable.delete();
+        ct.delete(variable);
       }
-      myUpstream.cleanUp();
+      myUpstream.cleanUp(ct);
     }
   }
 
@@ -885,12 +887,13 @@ class CollectMigration extends BaseStreamApiMigration {
     private static final Map<String, String> TYPE_TO_UNMODIFIABLE_WRAPPER = EntryStream.of(
       CommonClassNames.JAVA_UTIL_ARRAY_LIST, "toUnmodifiableList",
       "java.util.LinkedList", "toUnmodifiableList",
-      CommonClassNames.JAVA_UTIL_HASH_SET, "toUnmodifiableSet"
+      CommonClassNames.JAVA_UTIL_HASH_SET, "toUnmodifiableSet",
+      CommonClassNames.JAVA_UTIL_HASH_MAP, "toUnmodifiableMap"
     ).toMap();
 
-    private static final CallMatcher UNMODIFIABLE_WRAPPER =
-      CallMatcher.staticCall(CommonClassNames.JAVA_UTIL_COLLECTIONS, "unmodifiableList", "unmodifiableSet", "unmodifiableCollection")
-                 .parameterCount(1);
+    private static final CallMatcher UNMODIFIABLE_WRAPPER = CallMatcher.staticCall(
+      CommonClassNames.JAVA_UTIL_COLLECTIONS,
+      "unmodifiableList", "unmodifiableSet", "unmodifiableCollection", "unmodifiableMap").parameterCount(1);
 
     private static final CallMatcher STREAM_COLLECT =
       CallMatcher.instanceCall(CommonClassNames.JAVA_UTIL_STREAM_STREAM, "collect").parameterTypes("java.util.stream.Collector");
@@ -911,6 +914,9 @@ class CollectMigration extends BaseStreamApiMigration {
 
     @Override
     public String generateTerminal(CommentTracker ct, boolean strictMode) {
+      if (myUpstream instanceof ToMapTerminal) {
+        return ((ToMapTerminal)myUpstream).generateTerminal(ct, myUnmodifiableCollector);
+      }
       return ".collect(" + CommonClassNames.JAVA_UTIL_STREAM_COLLECTORS + "." + myUnmodifiableCollector + "())";
     }
 

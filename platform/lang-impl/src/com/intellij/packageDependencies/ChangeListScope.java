@@ -3,23 +3,23 @@ package com.intellij.packageDependencies;
 
 import com.intellij.icons.AllIcons;
 import com.intellij.ide.IdeBundle;
-import com.intellij.openapi.vcs.changes.ChangeList;
 import com.intellij.openapi.vcs.changes.ChangeListManager;
 import com.intellij.psi.search.scope.packageSet.FilteredNamedScope;
+import com.intellij.ui.OffsetIcon;
 import org.jetbrains.annotations.NotNull;
 
-import static com.intellij.openapi.vcs.changes.ChangesUtil.getAfterRevisionsFiles;
-import static java.util.stream.Collectors.toList;
+import javax.swing.Icon;
 
 public final class ChangeListScope extends FilteredNamedScope {
   public static final String NAME = IdeBundle.message("scope.modified.files");
+  private static final Icon ICON = new OffsetIcon(AllIcons.Scope.ChangedFiles);
 
   public ChangeListScope(@NotNull ChangeListManager manager) {
-    super(NAME, AllIcons.Toolwindows.ToolWindowChanges, 0, manager.getAffectedFiles());
+    super(NAME, AllIcons.Scope.ChangedFilesAll, 0, manager::isFileAffected);
   }
 
-  public ChangeListScope(@NotNull ChangeList list) {
-    super(list.getName(), AllIcons.Toolwindows.ToolWindowChanges, 0, getAfterRevisionsFiles(list.getChanges().stream()).collect(toList()));
+  public ChangeListScope(@NotNull ChangeListManager manager, @NotNull String name) {
+    super(name, ICON, 0, file -> manager.getChangeLists(file).stream().anyMatch(list -> list.getName().equals(name)));
   }
 
   @Override
@@ -32,8 +32,15 @@ public final class ChangeListScope extends FilteredNamedScope {
     if (object == this) return true;
     if (object instanceof ChangeListScope) {
       ChangeListScope scope = (ChangeListScope)object;
-      return getName().equals(scope.getName());
+      return scope.getIcon() == getIcon() && scope.getName().equals(getName());
     }
     return false;
+  }
+
+  @Override
+  public String toString() {
+    String string = super.toString();
+    if (AllIcons.Scope.ChangedFilesAll == getIcon()) string += "; ALL";
+    return string;
   }
 }

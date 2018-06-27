@@ -38,9 +38,6 @@ import java.util.Objects;
 import java.util.function.Consumer;
 import java.util.function.Function;
 
-/**
- * @author Tagir Valeev
- */
 abstract class TerminalOperation extends Operation {
   @Override
   final String wrap(StreamVariable inVar, StreamVariable outVar, String code, StreamToLoopReplacementContext context) {
@@ -329,7 +326,7 @@ abstract class TerminalOperation extends Operation {
     Project project = resultClass.getProject();
     PsiClass superClass = JavaPsiFacade.getInstance(project).findClass(superClassName, resultClass.getResolveScope());
     if(superClass == null) return resultType;
-    PsiSubstitutor superClassSubstitutor = TypeConversionUtil.getMaybeSuperClassSubstitutor(superClass, resultClass, PsiSubstitutor.EMPTY, null);
+    PsiSubstitutor superClassSubstitutor = TypeConversionUtil.getMaybeSuperClassSubstitutor(superClass, resultClass, PsiSubstitutor.EMPTY);
     if(superClassSubstitutor == null) {
       // inconsistent class hierarchy: probably something is not resolved
       return resultType;
@@ -1166,6 +1163,48 @@ abstract class TerminalOperation extends Operation {
     String generate(StreamVariable inVar, StreamToLoopReplacementContext context) {
       myFn.transform(context, inVar.getName());
       return myFn.getStatementText();
+    }
+  }
+
+  static class MapForEachTerminalOperation extends TerminalOperation {
+    private final FunctionHelper myFn;
+    private final PsiType myKeyType;
+    private final PsiType myValueType;
+
+    public MapForEachTerminalOperation(FunctionHelper fn, PsiType keyType, PsiType valueType) {
+      myFn = fn;
+      myKeyType = keyType;
+      myValueType = valueType;
+    }
+
+    @Override
+    public void preprocessVariables(StreamToLoopReplacementContext context, StreamVariable inVar, StreamVariable outVar) {
+      inVar.addBestNameCandidate("entry");
+      inVar.addBestNameCandidate("e");
+      inVar.addBestNameCandidate("mapEntry");
+    }
+
+    @Override
+    public void registerReusedElements(Consumer<PsiElement> consumer) {
+      myFn.registerReusedElements(consumer);
+    }
+
+    @Override
+    String generate(StreamVariable inVar, StreamToLoopReplacementContext context) {
+      StreamVariable keyVar = new StreamVariable(myKeyType);
+      myFn.preprocessVariable(context, keyVar, 0);
+      keyVar.addBestNameCandidate("key");
+      keyVar.addBestNameCandidate("k");
+      StreamVariable valueVar = new StreamVariable(myValueType);
+      myFn.preprocessVariable(context, valueVar, 1);
+      valueVar.addBestNameCandidate("value");
+      valueVar.addBestNameCandidate("v");
+      keyVar.register(context);
+      valueVar.register(context);
+      myFn.transform(context, keyVar.getName(), valueVar.getName());
+      return keyVar.getDeclaration(inVar.getName() + ".getKey()") +
+             valueVar.getDeclaration(inVar.getName() + ".getValue()") +
+             myFn.getStatementText();
     }
   }
 

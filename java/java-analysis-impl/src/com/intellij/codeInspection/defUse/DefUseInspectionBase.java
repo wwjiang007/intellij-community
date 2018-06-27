@@ -77,7 +77,10 @@ public class DefUseInspectionBase extends AbstractBaseJavaLocalInspectionTool {
 
         if (context instanceof PsiDeclarationStatement || context instanceof PsiResourceVariable) {
           if (info.isRead() && REPORT_REDUNDANT_INITIALIZER) {
-            reportInitializerProblem(psiVariable, holder, isOnTheFly);
+            PsiTypeElement typeElement = psiVariable.getTypeElement();
+            if (typeElement == null || !typeElement.isInferredType()) {
+              reportInitializerProblem(psiVariable, holder, isOnTheFly);
+            }
           }
         }
         else if (context instanceof PsiAssignmentExpression) {
@@ -140,6 +143,20 @@ public class DefUseInspectionBase extends AbstractBaseJavaLocalInspectionTool {
         final List<PsiAssignmentExpression> assignments = collectAssignments(field, classInitializer);
         if (!assignments.isEmpty()) {
           boolean isDefinitely = HighlightControlFlowUtil.variableDefinitelyAssignedIn(field, classInitializer.getBody());
+          if (isDefinitely) {
+            try {
+              ControlFlow flow = HighlightControlFlowUtil.getControlFlowNoConstantEvaluate(classInitializer.getBody());
+              if (ControlFlowUtil.getReadBeforeWrite(flow)
+                                 .stream()
+                                 .anyMatch(read -> (isStatic || ExpressionUtil.isEffectivelyUnqualified(read)) &&
+                                                   read.isReferenceTo(field))) {
+                isDefinitely = false;
+              }
+            }
+            catch (AnalysisCanceledException e) {
+              // ignore
+            }
+          }
           fieldWrites.add(FieldWrite.createAssignments(isDefinitely, assignments));
         }
       }
@@ -174,7 +191,7 @@ public class DefUseInspectionBase extends AbstractBaseJavaLocalInspectionTool {
       return false;
     }
     for (PsiMethod constructor : constructors) {
-      if (JavaHighlightUtil.getChainedConstructors(constructor) != null) continue;
+      if (!JavaHighlightUtil.getChainedConstructors(constructor).isEmpty()) continue;
       final PsiCodeBlock body = constructor.getBody();
       if (body == null || !HighlightControlFlowUtil.variableDefinitelyAssignedIn(field, body)) {
         return false;

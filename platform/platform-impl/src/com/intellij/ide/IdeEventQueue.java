@@ -41,6 +41,7 @@ import com.intellij.openapi.wm.IdeFrame;
 import com.intellij.openapi.wm.WindowManager;
 import com.intellij.openapi.wm.ex.WindowManagerEx;
 import com.intellij.openapi.wm.impl.FocusManagerImpl;
+import com.intellij.ui.mac.touchbar.TouchBarsManager;
 import com.intellij.util.Alarm;
 import com.intellij.util.ReflectionUtil;
 import com.intellij.util.concurrency.AppExecutorUtil;
@@ -88,22 +89,12 @@ public class IdeEventQueue extends EventQueue {
   private final List<Runnable> myIdleListeners = ContainerUtil.createLockFreeCopyOnWriteList();
   private final List<Runnable> myActivityListeners = ContainerUtil.createLockFreeCopyOnWriteList();
   private final Alarm myIdleRequestsAlarm = new Alarm();
-  private final Alarm myIdleTimeCounterAlarm = new Alarm();
-  private long myIdleTime;
   private final Map<Runnable, MyFireIdleRequest> myListener2Request = new HashMap<>();
   // IdleListener -> MyFireIdleRequest
   private final IdeKeyEventDispatcher myKeyEventDispatcher = new IdeKeyEventDispatcher(this);
   private final IdeMouseEventDispatcher myMouseEventDispatcher = new IdeMouseEventDispatcher();
   private final IdePopupManager myPopupManager = new IdePopupManager();
   private final ToolkitBugsProcessor myToolkitBugsProcessor = new ToolkitBugsProcessor();
-  private boolean mySuspendMode;
-  /**
-   * We exit from suspend mode when focus owner changes and no more WindowEvent.WINDOW_OPENED events
-   * <p/>
-   * in the queue. If WINDOW_OPENED event does exists in the queues then we restart the alarm.
-   */
-  private Component myFocusOwner;
-  private final Runnable myExitSuspendModeRunnable = new ExitSuspendModeRunnable();
 
   /**
    * We exit from suspend mode when this alarm is triggered and no mode WindowEvent.WINDOW_OPENED
@@ -123,7 +114,7 @@ public class IdeEventQueue extends EventQueue {
   private boolean myIsInInputEvent;
   @NotNull
   private AWTEvent myCurrentEvent = new InvocationEvent(this, EmptyRunnable.getInstance());
-  private long myLastActiveTime;
+  private volatile long myLastActiveTime = System.nanoTime();
   private long myLastEventTime = System.currentTimeMillis();
   private WindowManagerEx myWindowManager;
   private final List<EventDispatcher> myDispatchers = ContainerUtil.createLockFreeCopyOnWriteList();
@@ -205,7 +196,6 @@ public class IdeEventQueue extends EventQueue {
     EventQueue systemEventQueue = Toolkit.getDefaultToolkit().getSystemEventQueue();
     assert !(systemEventQueue instanceof IdeEventQueue) : systemEventQueue;
     systemEventQueue.push(this);
-    addIdleTimeCounterRequest();
 
     KeyboardFocusManager keyboardFocusManager = IdeKeyboardFocusManager.replaceDefault();
     keyboardFocusManager.addPropertyChangeListener("permanentFocusOwner", e -> {
@@ -217,9 +207,6 @@ public class IdeEventQueue extends EventQueue {
       application.assertIsDispatchThread();
       final Window focusedWindow = keyboardFocusManager.getFocusedWindow();
       final Component focusOwner = keyboardFocusManager.getFocusOwner();
-      if (mySuspendMode && focusedWindow != null && focusOwner != null && focusOwner != myFocusOwner && !(focusOwner instanceof Window)) {
-        exitSuspendMode();
-      }
     });
 
     addDispatcher(new WindowsAltSuppressor(), null);
@@ -229,6 +216,8 @@ public class IdeEventQueue extends EventQueue {
     addDispatcher(new EditingCanceller(), null);
 
     abracadabraDaberBoreh();
+
+    IdeKeyEventDispatcher.addDumbModeWarningListener(() -> flushDelayedKeyEvents());
   }
 
   private void abracadabraDaberBoreh() {
@@ -257,58 +246,6 @@ public class IdeEventQueue extends EventQueue {
     myWindowManager = windowManager;
   }
 
-
-  private void addIdleTimeCounterRequest() {
-    if (isTestMode()) return;
-
-    myIdleTimeCounterAlarm.cancelAllRequests();
-    myLastActiveTime = System.currentTimeMillis();
-    myIdleTimeCounterAlarm.addRequest(() -> {
-      myIdleTime += System.currentTimeMillis() - myLastActiveTime;
-      addIdleTimeCounterRequest();
-    }, 20000, ModalityState.NON_MODAL);
-  }
-
-  /**
-   * This class performs special processing in order to have {@link #getIdleTime()} return more or less up-to-date data.
-   * <p/>
-   * This method allows to stop that processing (convenient in non-intellij environment like upsource).
-   */
-  @SuppressWarnings("unused") // Used in upsource.
-  public void stopIdleTimeCalculation() {
-    myIdleTimeCounterAlarm.cancelAllRequests();
-  }
-
-  public boolean shouldNotTypeInEditor() {
-    return myKeyEventDispatcher.isWaitingForSecondKeyStroke() || mySuspendMode;
-  }
-
-
-  private void enterSuspendMode() {
-    mySuspendMode = true;
-    myFocusOwner = KeyboardFocusManager.getCurrentKeyboardFocusManager().getFocusOwner();
-    mySuspendModeAlarm.cancelAllRequests();
-    mySuspendModeAlarm.addRequest(myExitSuspendModeRunnable, 750);
-  }
-
-  /**
-   * Exits suspend mode and pumps all suspended events.
-   */
-  private void exitSuspendMode() {
-    if (shallEnterSuspendMode()) {
-      // We have to exit from suspend mode (focus owner changes or alarm is triggered) but
-      // WINDOW_OPENED isn't dispatched yet. In this case we have to restart the alarm until
-      // all WINDOW_OPENED event will be processed.
-      mySuspendModeAlarm.cancelAllRequests();
-      mySuspendModeAlarm.addRequest(myExitSuspendModeRunnable, 250);
-    }
-    else {
-      // Now we can pump all suspended events.
-      mySuspendMode = false;
-      myFocusOwner = null; // to prevent memory leaks
-    }
-  }
-
   public void addIdleListener(@NotNull final Runnable runnable, final int timeoutMillis) {
     if(timeoutMillis <= 0 || TimeUnit.MILLISECONDS.toHours(timeoutMillis) >= 24) {
       throw new IllegalArgumentException("This timeout value is unsupported: " + timeoutMillis);
@@ -330,13 +267,6 @@ public class IdeEventQueue extends EventQueue {
       final MyFireIdleRequest request = myListener2Request.remove(runnable);
       LOG.assertTrue(request != null);
       myIdleRequestsAlarm.cancelRequest(request);
-    }
-  }
-
-  /** @deprecated use {@link #addActivityListener(Runnable, Disposable)} (to be removed in IDEA 17) */
-  public void addActivityListener(@NotNull final Runnable runnable) {
-    synchronized (myLock) {
-      myActivityListeners.add(runnable);
     }
   }
 
@@ -462,6 +392,8 @@ public class IdeEventQueue extends EventQueue {
     }
 
     if (isFocusEvent(e)) {
+      TouchBarsManager.onFocusEvent(e);
+
       AWTEvent finalEvent = e;
       if (FOCUS_AWARE_RUNNABLES_LOG.isDebugEnabled()) {
         FOCUS_AWARE_RUNNABLES_LOG.debug("Focus event list (execute on focus event): " + focusEventsList.stream().
@@ -671,10 +603,6 @@ public class IdeEventQueue extends EventQueue {
 
     if (processAppActivationEvents(e)) return;
 
-    if (!myPopupManager.isPopupActive()) {
-      enterSuspendModeIfNeeded(e);
-    }
-
     myKeyboardBusy = e instanceof KeyEvent || myKeyboardEventsPosted.get() > myKeyboardEventsDispatched.get();
 
     if (e instanceof KeyEvent) {
@@ -720,12 +648,19 @@ public class IdeEventQueue extends EventQueue {
             MouseEvent.MOUSE_PRESSED == e.getID() ||
             MouseEvent.MOUSE_RELEASED == e.getID() ||
             MouseEvent.MOUSE_CLICKED == e.getID()) {
-          addIdleTimeCounterRequest();
+          myLastActiveTime = System.nanoTime();
           for (Runnable activityListener : myActivityListeners) {
             activityListener.run();
           }
         }
       }
+    }
+
+    // We must ignore typed events that are dispatched between KEY_PRESSED and KEY_RELEASED.
+    // Key event dispatcher resets its state on KEY_RELEASED event
+    if (e.getID() == KeyEvent.KEY_TYPED &&
+        (myKeyEventDispatcher.isPressedWasProcessed())) {
+      ((KeyEvent)e).consume();
     }
 
     if (myPopupManager.isPopupActive() && myPopupManager.dispatch(e)) {
@@ -735,6 +670,9 @@ public class IdeEventQueue extends EventQueue {
 
       return;
     }
+
+    if (e instanceof InputEvent)
+      TouchBarsManager.onInputEvent((InputEvent)e);
 
     if (dispatchByCustomDispatchers(e)) return;
 
@@ -749,13 +687,10 @@ public class IdeEventQueue extends EventQueue {
     }
 
     if (e instanceof KeyEvent) {
-      if (mySuspendMode || !myKeyEventDispatcher.dispatchKeyEvent((KeyEvent)e)) {
-        defaultDispatchEvent(e);
-      }
-      else {
+      if (myKeyEventDispatcher.dispatchKeyEvent((KeyEvent)e)) {
         ((KeyEvent)e).consume();
-        defaultDispatchEvent(e);
       }
+      defaultDispatchEvent(e);
     }
     else if (e instanceof MouseEvent) {
       MouseEvent me = (MouseEvent)e;
@@ -796,18 +731,6 @@ public class IdeEventQueue extends EventQueue {
            queue.peekEvent(MouseEvent.MOUSE_PRESSED) != null ||
            queue.peekEvent(MouseEvent.MOUSE_RELEASED) != null ||
            queue.peekEvent(MouseEvent.MOUSE_CLICKED) != null;
-  }
-
-  private void enterSuspendModeIfNeeded(@NotNull AWTEvent e) {
-    if (e instanceof KeyEvent) {
-      if (!mySuspendMode && shallEnterSuspendMode()) {
-        enterSuspendMode();
-      }
-    }
-  }
-
-  private boolean shallEnterSuspendMode() {
-    return peekEvent(WindowEvent.WINDOW_OPENED) != null;
   }
 
   private static boolean processAppActivationEvents(@NotNull AWTEvent e) {
@@ -982,20 +905,9 @@ public class IdeEventQueue extends EventQueue {
     }
   }
 
-  private final class ExitSuspendModeRunnable implements Runnable {
-    @Override
-    public void run() {
-      if (mySuspendMode) {
-        exitSuspendMode();
-      }
-    }
-  }
-
-
   public long getIdleTime() {
-    return myIdleTime;
+    return TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - myLastActiveTime);
   }
-
 
   @NotNull
   public IdePopupManager getPopupManager() {
@@ -1021,11 +933,6 @@ public class IdeEventQueue extends EventQueue {
   public void blockNextEvents(@NotNull MouseEvent e, @NotNull BlockMode blockMode) {
     myMouseEventDispatcher.blockNextEvents(e, blockMode);
   }
-
-  public boolean isSuspendMode() {
-    return mySuspendMode;
-  }
-
 
   private boolean isReady() {
     return !myKeyboardBusy && myKeyEventDispatcher.isReady();
@@ -1243,12 +1150,10 @@ public class IdeEventQueue extends EventQueue {
   private static boolean doesFocusGoIntoPopupFromWindowEvent(AWTEvent e) {
     if (e.getID() == WindowEvent.WINDOW_GAINED_FOCUS ||
         (SystemInfo.isLinux && e.getID() == WindowEvent.WINDOW_OPENED)) {
-      WindowEvent windowEvent = (WindowEvent)e;
-      Window eventWindow = windowEvent.getWindow();
-        if (eventWindow.getClass().getName().contains("HeavyWeightWindow")) {
-          TYPEAHEAD_LOG.debug("Focus goes into HeavyWeightWindow");
-          return true;
-        }
+      if (UIUtil.isTypeAheadAware(((WindowEvent)e).getWindow())) {
+        TYPEAHEAD_LOG.debug("Focus goes into TypeAhead aware window");
+        return true;
+      }
     }
     return false;
   }
@@ -1386,7 +1291,7 @@ public class IdeEventQueue extends EventQueue {
     return true;
   }
 
-  private void flushDelayedKeyEvents() {
+  public void flushDelayedKeyEvents() {
     delayKeyEvents.set(false);
     int size = myDelayedKeyEvents.size();
     for (int keyEventIndex = 0; keyEventIndex < size; keyEventIndex++) {

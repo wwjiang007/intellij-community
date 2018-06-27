@@ -8,11 +8,7 @@ import com.intellij.history.LocalHistoryAction;
 import com.intellij.ide.*;
 import com.intellij.ide.dnd.aware.DnDAwareTree;
 import com.intellij.ide.projectView.ProjectView;
-import com.intellij.ide.projectView.ProjectViewNodeDecorator;
-import com.intellij.ide.projectView.impl.AbstractProjectViewPane;
-import com.intellij.ide.projectView.impl.ModuleGroup;
-import com.intellij.ide.projectView.impl.ProjectViewPane;
-import com.intellij.ide.projectView.impl.ProjectViewTree;
+import com.intellij.ide.projectView.impl.*;
 import com.intellij.ide.scopeView.nodes.BasePsiNode;
 import com.intellij.ide.util.DeleteHandler;
 import com.intellij.ide.util.DirectoryChooserUtil;
@@ -51,6 +47,7 @@ import com.intellij.openapi.wm.IdeFocusManager;
 import com.intellij.openapi.wm.ToolWindowManager;
 import com.intellij.packageDependencies.DependencyValidationManager;
 import com.intellij.packageDependencies.ui.*;
+import com.intellij.problems.ProblemListener;
 import com.intellij.problems.WolfTheProblemSolver;
 import com.intellij.psi.*;
 import com.intellij.psi.search.scope.ProblemsScope;
@@ -114,7 +111,6 @@ public class ScopeTreeViewPanel extends JPanel implements Disposable {
   private final MyDeletePSIElementProvider myDeletePSIElementProvider = new MyDeletePSIElementProvider();
   private final ModuleDeleteProvider myDeleteModuleProvider = new ModuleDeleteProvider();
   private final DependencyValidationManager myDependencyValidationManager;
-  private final WolfTheProblemSolver.ProblemListener myProblemListener = new MyProblemListener();
   private final FileStatusListener myFileStatusListener = new FileStatusListener() {
     @Override
     public void fileStatusesChanged() {
@@ -177,7 +173,7 @@ public class ScopeTreeViewPanel extends JPanel implements Disposable {
     final MessageBusConnection connection = myProject.getMessageBus().connect(this);
     connection.subscribe(ProjectTopics.PROJECT_ROOTS, new MyModuleRootListener());
     PsiManager.getInstance(myProject).addPsiTreeChangeListener(myPsiTreeChangeAdapter);
-    WolfTheProblemSolver.getInstance(myProject).addProblemListener(myProblemListener);
+    connection.subscribe(ProblemListener.TOPIC, new MyProblemListener());
     ChangeListManager.getInstance(myProject).addChangeListListener(myChangesListListener);
     FileStatusManager.getInstance(myProject).addFileStatusListener(myFileStatusListener, myProject);
   }
@@ -186,7 +182,6 @@ public class ScopeTreeViewPanel extends JPanel implements Disposable {
   public void dispose() {
     FileTreeModelBuilder.clearCaches(myProject);
     PsiManager.getInstance(myProject).removePsiTreeChangeListener(myPsiTreeChangeAdapter);
-    WolfTheProblemSolver.getInstance(myProject).removeProblemListener(myProblemListener);
     ChangeListManager.getInstance(myProject).removeChangeListListener(myChangesListListener);
   }
 
@@ -247,13 +242,7 @@ public class ScopeTreeViewPanel extends JPanel implements Disposable {
     TreeUtil.installActions(myTree);
     EditSourceOnDoubleClickHandler.install(myTree);
     new TreeSpeedSearch(myTree);
-    myCopyPasteDelegator = new CopyPasteDelegator(myProject, this) {
-      @Override
-      @NotNull
-      protected PsiElement[] getSelectedElements() {
-        return getSelectedPsiElements();
-      }
-    };
+    myCopyPasteDelegator = new CopyPasteDelegator(myProject, this);
     myTreeExpansionMonitor = PackageTreeExpansionMonitor.install(myTree, myProject);
     final ScopeTreeStructureExpander[] extensions = Extensions.getExtensions(ScopeTreeStructureExpander.EP_NAME, myProject);
     for (ScopeTreeStructureExpander expander : extensions) {
@@ -524,11 +513,7 @@ public class ScopeTreeViewPanel extends JPanel implements Disposable {
         append(node.toString(), SimpleTextAttributes.fromTextAttributes(textAttributes));
 
         String oldToString = toString();
-        if (!myProject.isDisposed()) {
-          for(ProjectViewNodeDecorator decorator: Extensions.getExtensions(ProjectViewNodeDecorator.EP_NAME, myProject)) {
-            decorator.decorate(node, this);
-          }
-        }
+        CompoundProjectViewNodeDecorator.get(myProject).decorate(node, this);
         if (toString().equals(oldToString)) {   // nothing was decorated
           final String locationString = node.getComment();
           if (locationString != null && locationString.length() > 0) {
@@ -865,7 +850,7 @@ public class ScopeTreeViewPanel extends JPanel implements Disposable {
     return myTree;
   }
 
-  private class MyProblemListener extends WolfTheProblemSolver.ProblemListener {
+  private class MyProblemListener implements ProblemListener {
     @Override
     public void problemsAppeared(@NotNull VirtualFile file) {
       addNode(file, ProblemsScope.NAME);

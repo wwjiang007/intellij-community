@@ -1,6 +1,4 @@
-/*
- * Copyright 2000-2017 JetBrains s.r.o. Use of this source code is governed by the Apache 2.0 license that can be found in the LICENSE file.
- */
+// Copyright 2000-2018 JetBrains s.r.o. Use of this source code is governed by the Apache 2.0 license that can be found in the LICENSE file.
 
 package com.intellij.codeInsight.intention.impl;
 
@@ -184,6 +182,23 @@ public class IntentionHintComponent implements Disposable, ScrollAwareHint {
     NOTHING_CHANGED,    // intentions did not change
     CHANGED_INVISIBLE,  // intentions changed but the popup has not been shown yet, so can recreate list silently
     HIDE_AND_RECREATE   // ahh, has to close already shown popup, recreate and re-show again
+  }
+
+  @NotNull
+  public PopupUpdateResult getPopupUpdateResult(boolean actionsChanged) {
+    if (myPopup.isDisposed() || !myFile.isValid()) {
+      return PopupUpdateResult.HIDE_AND_RECREATE;
+    }
+    if (!actionsChanged) {
+      return PopupUpdateResult.NOTHING_CHANGED;
+    }
+    return myPopupShown ? PopupUpdateResult.HIDE_AND_RECREATE : PopupUpdateResult.CHANGED_INVISIBLE;
+  }
+
+  public void recreate() {
+    ApplicationManager.getApplication().assertIsDispatchThread();
+    ListPopupStep step = myPopup.getListStep();
+    recreateMyPopup(step);
   }
 
   @Nullable
@@ -420,7 +435,7 @@ public class IntentionHintComponent implements Disposable, ScrollAwareHint {
     final ScopeHighlighter highlighter = new ScopeHighlighter(myEditor);
     final ScopeHighlighter injectionHighlighter = new ScopeHighlighter(injectedEditor);
     
-    myPopup.addListener(new JBPopupListener.Adapter() {
+    myPopup.addListener(new JBPopupListener() {
       @Override
       public void onClosed(LightweightWindowEvent event) {
         highlighter.dropHighlight();

@@ -52,6 +52,7 @@ import com.intellij.openapi.ui.*;
 import com.intellij.openapi.util.Comparing;
 import com.intellij.openapi.util.Condition;
 import com.intellij.openapi.util.Disposer;
+import com.intellij.openapi.util.SystemInfo;
 import com.intellij.openapi.util.io.FileUtilRt;
 import com.intellij.openapi.util.registry.Registry;
 import com.intellij.openapi.util.text.StringUtil;
@@ -157,15 +158,24 @@ public class FindDialog extends DialogWrapper implements FindUI {
     if (haveResultsPreview()) {
       ApplicationManager.getApplication().invokeLater(this::scheduleResultsUpdate, ModalityState.any());
     }
+    if (Registry.is("ide.find.as.popup") && !SystemInfo.isJetBrainsJvm) {
+      setErrorText("<font color=\"#"+ColorUtil.toHex(UIUtil.getInactiveTextColor())+"\">" +
+                   "There is another version of this dialog in a form of lightweight popup. To use it, run the IDE with the bundled JRE." +
+                   "</font>");
+    }
     show();
   }
 
   @Override
   public void doCancelAction() { // doCancel disposes fields and then calls dispose
+    saveSettings();
+    super.doCancelAction();
+  }
+
+  public void saveSettings() {
     FindSettings.getInstance().setDefaultScopeName(myScopeCombo.getSelectedScopeName());
     applyTo(FindManager.getInstance(myProject).getFindInProjectModel(), false);
     rememberResultsPreviewWasOpen();
-    super.doCancelAction();
   }
 
   private void rememberResultsPreviewWasOpen() {
@@ -476,7 +486,7 @@ public class FindDialog extends DialogWrapper implements FindUI {
             FindInProjectUtil.setupProcessPresentation(myProject, showPanelIfOnlyOneUsage, presentation);
           ThreadLocal<VirtualFile> lastUsageFileRef = new ThreadLocal<>();
 
-          FindInProjectUtil.findUsages(findModel, myProject, info -> {
+          FindInProjectUtil.findUsages(findModel, myProject, processPresentation, filesToScanInitially, info -> {
             if(isCancelled()) {
               return false;
             }
@@ -495,7 +505,7 @@ public class FindDialog extends DialogWrapper implements FindUI {
               model.addRow(new Object[]{usage});
             }, state);
             return resultsCount.incrementAndGet() < ShowUsagesAction.getUsagesPageSize();
-          }, processPresentation, filesToScanInitially);
+          });
 
           boolean succeeded = !progressIndicatorWhenSearchStarted.isCanceled();
           if (succeeded) {

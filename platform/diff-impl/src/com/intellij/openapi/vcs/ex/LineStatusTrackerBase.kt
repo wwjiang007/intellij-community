@@ -17,8 +17,11 @@ package com.intellij.openapi.vcs.ex
 
 import com.intellij.diff.util.DiffUtil
 import com.intellij.diff.util.Side
+import com.intellij.openapi.Disposable
 import com.intellij.openapi.application.Application
 import com.intellij.openapi.application.ApplicationManager
+import com.intellij.openapi.application.runWriteAction
+import com.intellij.openapi.command.CommandProcessor
 import com.intellij.openapi.command.undo.UndoConstants
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.editor.Document
@@ -44,7 +47,7 @@ abstract class LineStatusTrackerBase<R : Range> {
   val document: Document
   val vcsDocument: Document
 
-  protected val disposable = Disposer.newDisposable()
+  protected val disposable: Disposable = Disposer.newDisposable()
   protected val documentTracker: DocumentTracker
   protected abstract val renderer: LineStatusMarkerRenderer
 
@@ -133,14 +136,22 @@ abstract class LineStatusTrackerBase<R : Range> {
 
   @CalledInAwt
   protected fun updateDocument(side: Side, commandName: String?, task: (Document) -> Unit): Boolean {
-    val doc = side[vcsDocument, document]
-
-    if (side.isLeft) doc.setReadOnly(false)
-    try {
-      return DiffUtil.executeWriteCommand(doc, project, commandName, { task(doc) })
+    if (side.isLeft) {
+      vcsDocument.setReadOnly(false)
+      try {
+        runWriteAction {
+          CommandProcessor.getInstance().runUndoTransparentAction {
+            task(vcsDocument)
+          }
+        }
+        return true
+      }
+      finally {
+        vcsDocument.setReadOnly(true)
+      }
     }
-    finally {
-      if (side.isLeft) doc.setReadOnly(true)
+    else {
+      return DiffUtil.executeWriteCommand(document, project, commandName, { task(document) })
     }
   }
 
@@ -459,18 +470,18 @@ abstract class LineStatusTrackerBase<R : Range> {
 
 
   companion object {
-    @JvmStatic protected val LOG = Logger.getInstance("#com.intellij.openapi.vcs.ex.LineStatusTracker")
+    @JvmStatic protected val LOG: Logger = Logger.getInstance("#com.intellij.openapi.vcs.ex.LineStatusTracker")
 
     @JvmStatic protected val Block.start: Int get() = range.start2
     @JvmStatic protected val Block.end: Int get() = range.end2
     @JvmStatic protected val Block.vcsStart: Int get() = range.start1
     @JvmStatic protected val Block.vcsEnd: Int get() = range.end1
 
-    @JvmStatic protected fun Block.isSelectedByLine(line: Int) = DiffUtil.isSelectedByLine(line, this.range.start2, this.range.end2)
-    @JvmStatic protected fun Block.isSelectedByLine(lines: BitSet) = DiffUtil.isSelectedByLine(lines, this.range.start2, this.range.end2)
+    @JvmStatic protected fun Block.isSelectedByLine(line: Int): Boolean = DiffUtil.isSelectedByLine(line, this.range.start2, this.range.end2)
+    @JvmStatic protected fun Block.isSelectedByLine(lines: BitSet): Boolean = DiffUtil.isSelectedByLine(lines, this.range.start2, this.range.end2)
   }
 
 
   @TestOnly
-  fun getDocumentTrackerInTestMode() = documentTracker
+  fun getDocumentTrackerInTestMode(): DocumentTracker = documentTracker
 }

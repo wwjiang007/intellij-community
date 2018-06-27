@@ -44,7 +44,7 @@ public interface RunContentManager {
   }
 
   /** @deprecated Use {@link LangDataKeys#RUN_CONTENT_DESCRIPTOR} instead (to be removed in IDEA 16) */
-  @SuppressWarnings("UnusedDeclaration")
+  @Deprecated @SuppressWarnings("UnusedDeclaration")
   DataKey<RunContentDescriptor> RUN_CONTENT_DESCRIPTOR = LangDataKeys.RUN_CONTENT_DESCRIPTOR;
 
   /**
@@ -88,11 +88,11 @@ public interface RunContentManager {
 
   void hideRunContent(@NotNull Executor executor, RunContentDescriptor descriptor);
 
-  boolean removeRunContent(@NotNull Executor executor, RunContentDescriptor descriptor);
+  boolean removeRunContent(@NotNull Executor executor, @NotNull RunContentDescriptor descriptor);
 
-  void toFrontRunContent(Executor requestor, RunContentDescriptor descriptor);
+  void toFrontRunContent(@NotNull Executor requestor, @NotNull RunContentDescriptor descriptor);
 
-  void toFrontRunContent(Executor requestor, ProcessHandler handler);
+  void toFrontRunContent(@NotNull Executor requestor, @NotNull ProcessHandler handler);
 
   @Nullable
   ToolWindow getToolWindowByDescriptor(@NotNull RunContentDescriptor descriptor);

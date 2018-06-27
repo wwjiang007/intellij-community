@@ -16,22 +16,30 @@
 package org.jetbrains.idea.maven.project;
 
 import com.intellij.execution.configurations.ParametersList;
+import com.intellij.openapi.module.Module;
+import com.intellij.openapi.module.ModuleManager;
 import com.intellij.openapi.module.ModuleType;
 import com.intellij.openapi.module.StdModuleTypes;
 import com.intellij.openapi.project.Project;
+import com.intellij.openapi.roots.OrderEnumerator;
 import com.intellij.openapi.util.Comparing;
 import com.intellij.openapi.util.Key;
 import com.intellij.openapi.util.Pair;
 import com.intellij.openapi.util.io.BufferExposingByteArrayOutputStream;
 import com.intellij.openapi.util.io.FileUtil;
+import com.intellij.openapi.util.io.StreamUtil;
 import com.intellij.openapi.util.text.StringUtil;
+import com.intellij.openapi.vfs.CharsetToolkit;
 import com.intellij.openapi.vfs.LocalFileSystem;
 import com.intellij.openapi.vfs.VirtualFile;
+import com.intellij.util.Consumer;
 import com.intellij.util.containers.ContainerUtil;
 import gnu.trove.THashSet;
 import org.jdom.Element;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.SystemIndependent;
+import org.jetbrains.idea.maven.importing.MavenAnnotationProcessorsModuleService;
 import org.jetbrains.idea.maven.importing.MavenExtraArtifactType;
 import org.jetbrains.idea.maven.importing.MavenImporter;
 import org.jetbrains.idea.maven.model.*;
@@ -39,15 +47,19 @@ import org.jetbrains.idea.maven.plugins.api.MavenModelPropertiesPatcher;
 import org.jetbrains.idea.maven.server.MavenEmbedderWrapper;
 import org.jetbrains.idea.maven.server.NativeMavenProjectHolder;
 import org.jetbrains.idea.maven.utils.*;
+import org.jetbrains.jps.util.JpsPathUtil;
 
 import java.io.*;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.stream.Collectors;
+
+import static com.intellij.openapi.roots.OrderEnumerator.orderEntries;
 
 public class MavenProject {
 
   private static final Key<MavenArtifactIndex> DEPENDENCIES_CACHE_KEY = Key.create("MavenProject.DEPENDENCIES_CACHE_KEY");
+  private static final Key<Map<String, String>> MAVEN_CONFIG_CACHE_KEY = Key.create("MavenProject.MAVEN_CONFIG_CACHE_KEY");
+  private static final Key<Map<String, String>> JVM_CONFIG_CACHE_KEY = Key.create("MavenProject.JVM_CONFIG_CACHE_KEY");
   private static final Key<List<String>> FILTERS_CACHE_KEY = Key.create("MavenProject.FILTERS_CACHE_KEY");
 
   @NotNull private final VirtualFile myFile;
@@ -859,14 +871,37 @@ public class MavenProject {
   }
 
   @NotNull
-  public List<MavenArtifact> getAnnotationProcessors() {
+  public List<MavenArtifact> getExternalAnnotationProcessors() {
     return myState.myAnnotationProcessors;
   }
 
   @NotNull
-  public String getAnnotationProcessorPath() {
-    return getAnnotationProcessors()
-      .stream().map(MavenArtifact::getPath).map(FileUtil::toSystemDependentName).collect(Collectors.joining(File.pathSeparator));
+  public String getAnnotationProcessorPath(Project project) {
+    StringJoiner annotationProcessorPath = new StringJoiner(File.pathSeparator);
+
+    Consumer<String> resultAppender = path -> annotationProcessorPath.add(FileUtil.toSystemDependentName(path));
+
+    for (MavenArtifact artifact : getExternalAnnotationProcessors()) {
+      resultAppender.consume(artifact.getPath());
+    }
+
+    MavenProjectsManager projectsManager = MavenProjectsManager.getInstance(project);
+    Module module = projectsManager.findModule(this);
+    if (module != null) {
+      MavenAnnotationProcessorsModuleService apService = MavenAnnotationProcessorsModuleService.getInstance(module);
+      for (String moduleName : apService.getAnnotationProcessorModules()) {
+        Module annotationProcessorModule = ModuleManager.getInstance(project).findModuleByName(moduleName);
+        if (annotationProcessorModule != null) {
+          OrderEnumerator enumerator = orderEntries(annotationProcessorModule).withoutSdk().productionOnly().runtimeOnly().recursively();
+
+          for (String url : enumerator.classes().getUrls()) {
+            resultAppender.consume(JpsPathUtil.urlToPath(url));
+          }
+        }
+      }
+    }
+
+    return annotationProcessorPath.toString();
   }
 
   @NotNull
@@ -1026,6 +1061,11 @@ public class MavenProject {
   }
 
   @Nullable
+  public String getReleaseLevel() {
+    return getCompilerLevel("release");
+  }
+
+  @Nullable
   private String getCompilerLevel(String level) {
     String result = MavenJDOMUtil.findChildValueByPath(getCompilerConfig(), level);
 
@@ -1046,6 +1086,45 @@ public class MavenProject {
   @NotNull
   public Properties getProperties() {
     return myState.myProperties;
+  }
+
+  @NotNull
+  public Map<String, String> getMavenConfig() {
+    Map<String, String> mavenConfig = getCachedValue(MAVEN_CONFIG_CACHE_KEY);
+    if (mavenConfig == null) {
+      mavenConfig = readConfigFile(MavenConstants.MAVEN_CONFIG_RELATIVE_PATH);
+      putCachedValue(MAVEN_CONFIG_CACHE_KEY, mavenConfig);
+    }
+
+    return mavenConfig;
+  }
+
+  @NotNull
+  public Map<String, String> getJvmConfig() {
+    Map<String, String> jvmConfig = getCachedValue(JVM_CONFIG_CACHE_KEY);
+    if (jvmConfig == null) {
+      jvmConfig = readConfigFile(MavenConstants.JVM_CONFIG_RELATIVE_PATH);
+      putCachedValue(JVM_CONFIG_CACHE_KEY, jvmConfig);
+    }
+
+    return jvmConfig;
+  }
+
+  @NotNull
+  private Map<String, String> readConfigFile(@SystemIndependent String relativePath) {
+    File baseDir = MavenUtil.getBaseDir(getDirectoryFile());
+    File configFile = new File(baseDir + FileUtil.toSystemDependentName(relativePath));
+
+    ParametersList parametersList = new ParametersList();
+    if (configFile.exists() && configFile.isFile()) {
+      try (InputStream in = new FileInputStream(configFile)) {
+        parametersList.addParametersString(StreamUtil.readText(in, CharsetToolkit.UTF8));
+      }
+      catch (IOException ignore) {
+      }
+    }
+    Map<String, String> config = parametersList.getProperties();
+    return config.isEmpty() ? Collections.emptyMap() : config;
   }
 
   @NotNull

@@ -30,22 +30,22 @@ import com.intellij.openapi.externalSystem.model.execution.ExternalSystemTaskExe
 import com.intellij.openapi.externalSystem.model.project.ModuleData;
 import com.intellij.openapi.externalSystem.service.execution.ProgressExecutionMode;
 import com.intellij.openapi.externalSystem.task.TaskCallback;
-import com.intellij.openapi.externalSystem.util.ExternalSystemApiUtil;
 import com.intellij.openapi.externalSystem.util.ExternalSystemUtil;
 import com.intellij.openapi.module.Module;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.util.UserDataHolderBase;
-import com.intellij.openapi.util.text.StringUtil;
 import com.intellij.packaging.artifacts.Artifact;
 import com.intellij.task.*;
 import com.intellij.task.impl.JpsProjectTaskRunner;
 import com.intellij.util.SmartList;
 import com.intellij.util.SystemProperties;
 import com.intellij.util.containers.ContainerUtil;
+import com.intellij.util.containers.FactoryMap;
 import com.intellij.util.containers.MultiMap;
 import org.intellij.lang.annotations.Language;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.plugins.gradle.service.project.GradleBuildSrcProjectsResolver;
 import org.jetbrains.plugins.gradle.service.project.GradleProjectResolverUtil;
 import org.jetbrains.plugins.gradle.service.task.GradleTaskManager;
 import org.jetbrains.plugins.gradle.settings.GradleSettings;
@@ -57,6 +57,9 @@ import java.util.*;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static com.intellij.openapi.externalSystem.service.execution.ExternalSystemRunConfiguration.PROGRESS_LISTENER_KEY;
+import static com.intellij.openapi.externalSystem.util.ExternalSystemApiUtil.*;
+import static com.intellij.openapi.util.text.StringUtil.*;
+import static org.jetbrains.plugins.gradle.execution.GradleRunnerUtil.resolveProjectPath;
 
 /**
  * TODO automatically create exploded-war task
@@ -72,7 +75,7 @@ public class GradleProjectTaskRunner extends ProjectTaskRunner {
 
   @Language("Groovy")
   private static final String FORCE_COMPILE_TASKS_INIT_SCRIPT_TEMPLATE = "projectsEvaluated { \n" +
-                                                                         "  rootProject.project('%s').tasks.withType(AbstractCompile) {  \n" +
+                                                                         "  rootProject.findProject('%s')?.tasks?.withType(AbstractCompile) {  \n" +
                                                                          "    outputs.upToDateWhen { false } \n" +
                                                                          "  } \n" +
                                                                          "}\n";
@@ -165,7 +168,7 @@ public class GradleProjectTaskRunner extends ProjectTaskRunner {
 
       Collection<String> scripts = initScripts.getModifiable(rootProjectPath);
       scripts.add(compilerOptionsInitScript);
-      userData.putUserData(GradleTaskManager.INIT_SCRIPT_KEY, StringUtil.join(scripts, SystemProperties.getLineSeparator()));
+      userData.putUserData(GradleTaskManager.INIT_SCRIPT_KEY, join(scripts, SystemProperties.getLineSeparator()));
 
       ExternalSystemUtil.runTask(settings, DefaultRunExecutor.EXECUTOR_ID, project, GradleConstants.SYSTEM_ID,
                                  taskCallback, ProgressExecutionMode.IN_BACKGROUND_ASYNC, false, userData);
@@ -176,7 +179,7 @@ public class GradleProjectTaskRunner extends ProjectTaskRunner {
   public boolean canRun(@NotNull ProjectTask projectTask) {
     if (!GradleSystemRunningSettings.getInstance().isUseGradleAwareMake()) return false;
     if (projectTask instanceof ModuleBuildTask) {
-      return ExternalSystemApiUtil.isExternalSystemAwareModule(GradleConstants.SYSTEM_ID, ((ModuleBuildTask)projectTask).getModule());
+      return isExternalSystemAwareModule(GradleConstants.SYSTEM_ID, ((ModuleBuildTask)projectTask).getModule());
     }
     if (projectTask instanceof ProjectModelBuildTask) {
       ProjectModelBuildTask buildTask = (ProjectModelBuildTask)projectTask;
@@ -191,7 +194,7 @@ public class GradleProjectTaskRunner extends ProjectTaskRunner {
       RunProfile runProfile = ((ExecuteRunConfigurationTask)projectTask).getRunProfile();
       if (runProfile instanceof ModuleBasedConfiguration) {
         RunConfigurationModule module = ((ModuleBasedConfiguration)runProfile).getConfigurationModule();
-        if (!ExternalSystemApiUtil.isExternalSystemAwareModule(GradleConstants.SYSTEM_ID, module.getModule())) {
+        if (!isExternalSystemAwareModule(GradleConstants.SYSTEM_ID, module.getModule())) {
           return false;
         }
       }
@@ -223,6 +226,7 @@ public class GradleProjectTaskRunner extends ProjectTaskRunner {
     if (ContainerUtil.isEmpty(projectTasks)) return Collections.emptyList();
 
     List<Module> affectedModules = new SmartList<>();
+    Map<Module, String> rootPathsMap = FactoryMap.create(module -> notNullize(resolveProjectPath(module)));
     final CachedModuleDataFinder moduleDataFinder = new CachedModuleDataFinder();
     for (ProjectTask projectTask : projectTasks) {
       if (!(projectTask instanceof ModuleBuildTask)) continue;
@@ -231,28 +235,33 @@ public class GradleProjectTaskRunner extends ProjectTaskRunner {
       Module module = moduleBuildTask.getModule();
       affectedModules.add(module);
 
-      final String rootProjectPath = ExternalSystemApiUtil.getExternalRootProjectPath(module);
-      if (rootProjectPath == null) continue;
+      final String rootProjectPath = rootPathsMap.get(module);
+      if (isEmpty(rootProjectPath)) continue;
 
-      final String projectId = ExternalSystemApiUtil.getExternalProjectId(module);
+      final String projectId = getExternalProjectId(module);
       if (projectId == null) continue;
-      final String externalProjectPath = ExternalSystemApiUtil.getExternalProjectPath(module);
-      if (externalProjectPath == null || StringUtil.endsWith(externalProjectPath, "buildSrc")) continue;
+      final String externalProjectPath = getExternalProjectPath(module);
+      if (externalProjectPath == null || endsWith(externalProjectPath, "buildSrc")) continue;
 
       final DataNode<? extends ModuleData> moduleDataNode = moduleDataFinder.findMainModuleData(module);
       if (moduleDataNode == null) continue;
 
-      List<String> gradleTasks = ContainerUtil.mapNotNull(ExternalSystemApiUtil.findAll(moduleDataNode, ProjectKeys.TASK),
-                                                    node -> node.getData().isInherited() ? null : node.getData().getName());
+      // all buildSrc runtime projects will be built by gradle implicitly
+      if (Boolean.parseBoolean(moduleDataNode.getData().getProperty(GradleBuildSrcProjectsResolver.BUILD_SRC_MODULE_PROPERTY))) {
+        continue;
+      }
+
+      String gradlePath = GradleProjectResolverUtil.getGradlePath(module);
+      if (gradlePath == null) continue;
+      String taskPrefix = endsWithChar(gradlePath, ':') ? gradlePath : (gradlePath + ':');
+
+      List<String> gradleTasks = ContainerUtil.mapNotNull(
+        findAll(moduleDataNode, ProjectKeys.TASK), node ->
+          node.getData().isInherited() ? null : trimStart(node.getData().getName(), taskPrefix));
 
       Collection<String> projectInitScripts = initScripts.getModifiable(rootProjectPath);
       Collection<String> buildRootTasks = buildTasksMap.getModifiable(rootProjectPath);
-      final String moduleType = ExternalSystemApiUtil.getExternalModuleType(module);
-      String gradlePath = GradleProjectResolverUtil.getGradlePath(module);
-      if(gradlePath == null) continue;
-      if (!StringUtil.endsWithChar(gradlePath, ':')) {
-        gradlePath += ":";
-      }
+      final String moduleType = getExternalModuleType(module);
 
       if (!moduleBuildTask.isIncrementalBuild()) {
         projectInitScripts.add(String.format(FORCE_COMPILE_TASKS_INIT_SCRIPT_TEMPLATE, gradlePath));
@@ -260,21 +269,21 @@ public class GradleProjectTaskRunner extends ProjectTaskRunner {
       String assembleTask = "assemble";
       if (GradleConstants.GRADLE_SOURCE_SET_MODULE_TYPE_KEY.equals(moduleType)) {
         String sourceSetName = GradleProjectResolverUtil.getSourceSetName(module);
-        String gradleTask = StringUtil.isEmpty(sourceSetName) || "main".equals(sourceSetName) ? "classes" : sourceSetName + "Classes";
+        String gradleTask = isEmpty(sourceSetName) || "main".equals(sourceSetName) ? "classes" : sourceSetName + "Classes";
         if (gradleTasks.contains(gradleTask)) {
-          buildRootTasks.add(gradlePath + gradleTask);
+          buildRootTasks.add(taskPrefix + gradleTask);
         }
         else if ("main".equals(sourceSetName) || "test".equals(sourceSetName)) {
-          buildRootTasks.add(gradlePath + assembleTask);
+          buildRootTasks.add(taskPrefix + assembleTask);
         }
       }
       else {
         if (gradleTasks.contains("classes")) {
-          buildRootTasks.add(gradlePath + "classes");
-          buildRootTasks.add(gradlePath + "testClasses");
+          buildRootTasks.add(taskPrefix + "classes");
+          buildRootTasks.add(taskPrefix + "testClasses");
         }
         else if (gradleTasks.contains(assembleTask)) {
-          buildRootTasks.add(gradlePath + assembleTask);
+          buildRootTasks.add(taskPrefix + assembleTask);
         }
       }
     }

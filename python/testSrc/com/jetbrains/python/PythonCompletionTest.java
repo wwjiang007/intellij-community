@@ -32,10 +32,23 @@ public class PythonCompletionTest extends PyTestCase {
   }
 
   private void doMultiFileTest() {
+    doMultiFileTest(CompletionType.BASIC, 1);
+  }
+
+  private void doMultiFileTest(CompletionType completionType, int invocationCount) {
+    myFixture.copyDirectoryToProject(getTestName(true), "");
+    myFixture.configureByFile("a.py");
+    myFixture.complete(completionType, invocationCount);
+    myFixture.checkResultByFile(getTestName(true) + "/a.after.py");
+  }
+
+  private void doMultiFileTestAssertSameOrderedElements(String... variants) {
     myFixture.copyDirectoryToProject(getTestName(true), "");
     myFixture.configureByFile("a.py");
     myFixture.completeBasic();
-    myFixture.checkResultByFile(getTestName(true) + "/a.after.py");
+    final List<String> suggested = myFixture.getLookupElementStrings();
+    assertNotNull(suggested);
+    assertOrderedEquals(suggested, variants);
   }
 
   @Nullable
@@ -218,8 +231,20 @@ public class PythonCompletionTest extends PyTestCase {
     assertSameElements(myFixture.getLookupElementStrings(), Arrays.asList("my_foo", "my_bar"));
   }
 
-  public void testSlots() {  // PY-1211
-    doTest();
+  // PY-1211, PY-29232
+  public void testSlots() {
+    final String testName = getTestName(true);
+    myFixture.configureByFile(testName + ".py");
+    myFixture.completeBasicAllCarets(null);
+    myFixture.checkResultByFile(testName + ".after.py");
+  }
+
+  // PY-29231
+  public void testSlotsAsAllowedNames() {
+    final String testName = getTestName(true);
+    myFixture.configureByFile(testName + ".py");
+    myFixture.completeBasicAllCarets(null);
+    myFixture.checkResultByFile(testName + ".after.py");
   }
 
   public void testReturnType() {
@@ -1255,18 +1280,124 @@ public class PythonCompletionTest extends PyTestCase {
     assertContainsElements(suggested, "__init__(self)");
   }
 
-  //PY-28461
+  // PY-28461
   public void testImplicitImportsInsidePackage() {
+    runWithLanguageLevel(LanguageLevel.PYTHON37,
+                         () -> doMultiFileTestAssertSameOrderedElements("bar", "foo", "foo2", "m1", "pkg2", "pkg3"));
+  }
+
+  // PY-28461
+  public void testImplicitImportsInsidePackagePy2() {
+    runWithLanguageLevel(LanguageLevel.PYTHON27,
+                         () -> doMultiFileTestAssertSameOrderedElements("bar", "foo", "foo2", "m1", "pkg2", "pkg3"));
+  }
+
+  // PY-3674
+  public void testUnderscoredItemsOrderModuleImport() {
+    doMultiFileTestAssertSameOrderedElements("A", "B", "f", "_A", "_f", "_g", "__A", "__f");
+  }
+
+  // PY-3674
+  public void testUnderscoredItemsOrderFromModuleImport() {
+    doMultiFileTestAssertSameOrderedElements("A", "B", "f", "_A", "_f", "_g", "__A", "__f");
+  }
+
+  // PY-17810
+  public void testLocalClasses() {
+    assertNoVariantsInExtendedCompletion();
+  }
+
+  // PY-17810
+  public void testEntriesWithNoImportablePath() {
+    assertNoVariantsInExtendedCompletion();
+  }
+
+  // PY-17810
+  public void testDuplicatedEntriesFromMultipleSourceRoots() {
+    assertSingleVariantInExtendedCompletionWithSourceRoots();
+  }
+
+  // PY-17810
+  public void testModuleWithNoImportablePath() {
+    assertNoVariantsInExtendedCompletion();
+  }
+
+  // PY-17810
+  public void testModuleFromMultipleSourceRoots() {
+    assertSingleVariantInExtendedCompletionWithSourceRoots();
+  }
+
+  // PY-17810
+  public void testPackageFromMultipleSourceRoots() {
+    assertSingleVariantInExtendedCompletionWithSourceRoots();
+  }
+
+  // PY-17810
+  public void testFromPackageImport() {
     myFixture.copyDirectoryToProject(getTestName(true), "");
     myFixture.configureByFile("a.py");
-    myFixture.completeBasic();
+    myFixture.complete(CompletionType.BASIC, 2);
     final List<String> suggested = myFixture.getLookupElementStrings();
     assertNotNull(suggested);
-    assertSameElements(suggested, "m1", "pkg2", "pkg3", "bar", "foo", "foo2");
+    assertSameElements(suggested, "m1", "m2");
+  }
+
+  // PY-28989
+  public void testModuleFromNamespacePackage() {
+    runWithLanguageLevel(LanguageLevel.PYTHON34, this::assertSingleVariantInExtendedCompletion);
+  }
+
+  // PY-29158
+  public void testModuleStringLiteralCompletion() {
+    doMultiFileTest(CompletionType.BASIC, 2);
+  }
+
+  // PY-28341
+  public void testCompletionForUsedAttribute() {
+    doMultiFileTest();
+  }
+
+  // PY-28103
+  public void testPrintFunctionWithoutFuture() {
+    final List<String> suggested = doTestByText("pr<caret>");
+    assertNotNull(suggested);
+    assertSameElements(suggested, "print", "property", "repr");
+  }
+
+  // PY-28103
+  public void testPrintFunctionWithFuture() {
+    final List<String> suggested = doTestByText("from __future__ import print_function\npr<caret>");
+    assertNotNull(suggested);
+    assertSameElements(suggested, "print", "print", "print_function", "property", "repr");
+  }
+
+  private void assertNoVariantsInExtendedCompletion() {
+    myFixture.copyDirectoryToProject(getTestName(true), "");
+    myFixture.configureByFile("a.py");
+    myFixture.complete(CompletionType.BASIC, 2);
+    assertNotNull(myFixture.getLookupElements());
+    assertEmpty(myFixture.getLookupElements());
+  }
+
+  private void assertSingleVariantInExtendedCompletion() {
+    doMultiFileTest(CompletionType.BASIC, 2);
+    assertNull(myFixture.getLookupElements());
+  }
+
+  private void assertSingleVariantInExtendedCompletionWithSourceRoots() {
+    myFixture.copyDirectoryToProject(getTestName(true), "");
+    runWithSourceRoots(Lists.newArrayList(
+      myFixture.findFileInTempDir("root1"),
+      myFixture.findFileInTempDir("root2")),
+                       () -> {
+                         myFixture.configureByFile("a.py");
+                         assertNull(myFixture.complete(CompletionType.BASIC, 2));
+                         myFixture.checkResultByFile(getTestName(true) + "/a.after.py");
+                       });
   }
 
   @Override
   protected String getTestDataPath() {
-    return super.getTestDataPath() + "/completion";
+    return PythonTestUtil.getTestDataPath() + "/completion";
   }
 }

@@ -1,6 +1,7 @@
 // Copyright 2000-2018 JetBrains s.r.o. Use of this source code is governed by the Apache 2.0 license that can be found in the LICENSE file.
 package com.intellij.execution.testDiscovery;
 
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -31,8 +32,12 @@ public class IntellijTestDiscoveryProducer implements TestDiscoveryProducer {
       return MultiMap.emptyInstance();
     }
     String methodFqn = classFQName + "." + methodName;
-    RequestBuilder r = HttpRequests.request(INTELLIJ_TEST_DISCOVERY_HOST + "/search/tests/by-method/" + methodFqn);
+    String url = INTELLIJ_TEST_DISCOVERY_HOST + "/search/tests/by-method?fqn=" + methodFqn;
+    LOG.debug(url);
 
+    RequestBuilder r = HttpRequests.request(url)
+                                   .productNameAsUserAgent()
+                                   .gzip(true);
     try {
       return r.connect(request -> {
         MultiMap<String, String> map = new MultiMap<>();
@@ -56,6 +61,7 @@ public class IntellijTestDiscoveryProducer implements TestDiscoveryProducer {
   }
 
   @JsonInclude(JsonInclude.Include.NON_EMPTY)
+  @JsonIgnoreProperties(ignoreUnknown = true)
   public static class TestsSearchResult {
     @Nullable
     private String method;
@@ -97,6 +103,11 @@ public class IntellijTestDiscoveryProducer implements TestDiscoveryProducer {
       return found;
     }
 
+    public TestsSearchResult setFound(int found) {
+      this.found = found;
+      return this;
+    }
+
     @NotNull
     public Map<String, List<String>> getTests() {
       return tests;
@@ -104,7 +115,6 @@ public class IntellijTestDiscoveryProducer implements TestDiscoveryProducer {
 
     public TestsSearchResult setTests(@NotNull Map<String, List<String>> tests) {
       this.tests = tests;
-      this.found = tests.values().stream().mapToInt(List::size).sum();
       return this;
     }
 

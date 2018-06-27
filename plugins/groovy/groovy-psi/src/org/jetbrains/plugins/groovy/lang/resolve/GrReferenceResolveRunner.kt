@@ -3,9 +3,8 @@ package org.jetbrains.plugins.groovy.lang.resolve
 
 import com.intellij.psi.*
 import com.intellij.psi.scope.PsiScopeProcessor
+import com.intellij.psi.util.*
 import com.intellij.psi.util.InheritanceUtil.isInheritor
-import com.intellij.psi.util.PsiTreeUtil
-import com.intellij.psi.util.parents
 import org.jetbrains.plugins.groovy.lang.lexer.GroovyTokenTypes
 import org.jetbrains.plugins.groovy.lang.psi.api.GroovyResolveResult
 import org.jetbrains.plugins.groovy.lang.psi.api.auxiliary.modifiers.annotation.GrAnnotationArrayInitializer
@@ -39,7 +38,7 @@ class GrReferenceResolveRunner(val place: GrReferenceExpression, val processor: 
     else {
       val state = initialState.put(ClassHint.RESOLVE_CONTEXT, qualifier)
       if (place.dotTokenType === GroovyTokenTypes.mSPREAD_DOT) {
-        return qualifier.type.processSpread(processor, state, place)
+        return qualifier.type.processSpread(processor, state, place, place.parent !is GrMethodCall)
       }
       else {
         if (ResolveUtil.isClassReference(place)) return false
@@ -81,7 +80,7 @@ class GrReferenceResolveRunner(val place: GrReferenceExpression, val processor: 
     else {
       if (!qualifierType.processReceiverType(processor, state, place)) return false
       if (place.parent !is GrMethodCall && isInheritor(qualifierType, CommonClassNames.JAVA_UTIL_COLLECTION)) {
-        return qualifierType.processSpread(processor, state, place)
+        return qualifierType.processSpread(processor, state, place, true)
       }
     }
     return true
@@ -91,15 +90,15 @@ class GrReferenceResolveRunner(val place: GrReferenceExpression, val processor: 
 fun GrReferenceExpression.getCallVariants(upToArgument: GrExpression?): Array<out GroovyResolveResult> {
   val processor = GroovyResolverProcessorBuilder.builder()
     .setAllVariants(true)
-    .setUpToArgument(upToArgument)
     .build(this)
   GrReferenceResolveRunner(this, processor).resolveReferenceExpression()
   return processor.candidatesArray
 }
 
 fun GrReferenceExpression.resolveReferenceExpression(forceRValue: Boolean, incomplete: Boolean): Collection<GroovyResolveResult> {
-  val staticResults = resolveStatic()
-  if (staticResults.isNotEmpty()) return staticResults
+  resolveStatic()?.let {
+    return listOf(it)
+  }
 
   if (!canResolveToMethod(this) && isDefinitelyKeyOfMap(this)) return emptyList()
   val processor = GroovyResolverProcessorBuilder.builder()
@@ -110,10 +109,7 @@ fun GrReferenceExpression.resolveReferenceExpression(forceRValue: Boolean, incom
   return processor.candidates
 }
 
-private fun GrReferenceExpression.resolvePackageOrClass(): Collection<GroovyResolveResult> {
-  val packageOrClass = doResolvePackageOrClass() ?: return emptyList()
-  return listOf(ElementGroovyResult(packageOrClass))
-}
+private fun GrReferenceExpression.resolvePackageOrClass() = doResolvePackageOrClass()?.let(::ElementResolveResult)
 
 private fun GrReferenceExpression.doResolvePackageOrClass(): PsiElement? {
   val facade = JavaPsiFacade.getInstance(project)
@@ -131,7 +127,7 @@ private fun GrReferenceExpression.doResolvePackageOrClass(): PsiElement? {
     resolveClass()?.let { return it }
   }
 
-  for (parent in parents().drop(1)) {
+  for (parent in strictParents()) {
     if (parent !is GrReferenceExpression) return null
     if (parent.resolveClass() == null) continue
     val qname = qualifiedReferenceName!!
@@ -146,34 +142,48 @@ private fun GrReferenceExpression.doResolvePackageOrClass(): PsiElement? {
  *
  * @see org.codehaus.groovy.control.ResolveVisitor
  */
-private fun GrReferenceExpression.resolveStatic(): Collection<GroovyResolveResult> {
-  val name = referenceName ?: return emptyList()
+private fun GrReferenceExpression.resolveStatic(): GroovyResolveResult? {
+  return CachedValuesManager.getCachedValue(this) {
+    CachedValueProvider.Result.create(doResolveStatic(), this, PsiModificationTracker.JAVA_STRUCTURE_MODIFICATION_COUNT)
+  }
+}
 
-  val fqnResults = resolvePackageOrClass()
-  if (fqnResults.isNotEmpty()) return fqnResults
+private fun GrReferenceExpression.doResolveStatic(): GroovyResolveResult? {
+  val name = referenceName ?: return null
+
+  val fqnResult = resolvePackageOrClass()
+  if (fqnResult != null) {
+    return fqnResult
+  }
 
   val qualifier = qualifier
 
   if (qualifier == null) {
-    val locals = resolveToLocalVariable(name)
-    if (locals.size == 1) return locals
+    val localVariable = resolveToLocalVariable(name).singleOrNull()
+    if (localVariable != null) {
+      return localVariable
+    }
   }
 
-  if (qualifier == null || qualifier.isThisExpression()) {
-    val fields = resolveToField(name)
-    val field = fields.singleOrNull()
-    if (field != null && checkCurrentClass(field.element, this)) return fields
+  if (parent !is GrMethodCall) {
+    if (qualifier == null || qualifier.isThisExpression()) {
+      val field = resolveToField(name).singleOrNull()
+      if (field != null && checkCurrentClass(field.element, this)) {
+        return field
+      }
+    }
+    if (qualifier == null) {
+      // at this point:
+      // - the reference is org.codehaus.groovy.ast.expr.VariableExpression
+      // - the reference doesn't resolve to a variable, meaning it accesses org.codehaus.groovy.ast.DynamicVariable
+      return resolveUnqualifiedType(name)
+    }
+    if (qualifier is GrReferenceExpression) {
+      return resolveQualifiedType(name, qualifier)
+    }
   }
 
-  if (qualifier == null && parent !is GrMethodCall) {
-    // at this point:
-    // - the reference is org.codehaus.groovy.ast.expr.VariableExpression
-    // - the reference doesn't resolve to a variable, meaning it accesses org.codehaus.groovy.ast.DynamicVariable
-    val classes = resolveUnqualifiedType(name)
-    if (classes.isNotEmpty()) return classes
-  }
-
-  return emptyList()
+  return null
 }
 
 /**
@@ -183,7 +193,7 @@ private fun GrReferenceExpression.resolveStatic(): Collection<GroovyResolveResul
  * @receiver call site
  * @return empty collection or a collection with 1 local variable result
  */
-private fun PsiElement.resolveToLocalVariable(name: String): Collection<ElementGroovyResult<GrVariable>> {
+private fun PsiElement.resolveToLocalVariable(name: String): Collection<ElementResolveResult<GrVariable>> {
   return treeWalkUpAndGet(LocalVariableProcessor(name))
 }
 
@@ -194,7 +204,7 @@ private fun PsiElement.resolveToLocalVariable(name: String): Collection<ElementG
  * @receiver call site
  * @return empty collection or a collection with 1 code field result
  */
-private fun PsiElement.resolveToField(name: String): Collection<ElementGroovyResult<GrField>> {
+private fun PsiElement.resolveToField(name: String): Collection<ElementResolveResult<GrField>> {
   return treeWalkUpAndGet(CodeFieldProcessor(name, this))
 }
 
@@ -211,8 +221,15 @@ private fun checkCurrentClass(field: GrField, place: PsiElement): Boolean {
 /**
  * @see org.codehaus.groovy.control.ResolveVisitor.transformVariableExpression
  */
-private fun PsiElement.resolveUnqualifiedType(name: String): List<ClassResolveResult> {
+private fun PsiElement.resolveUnqualifiedType(name: String): ClassResolveResult? {
   val processor = ReferenceExpressionClassProcessor(name, this)
   processUnqualified(processor, ResolveState.initial())
-  return processor.results
+  return processor.result
+}
+
+private fun PsiElement.resolveQualifiedType(name: String, qualifier: GrReferenceExpression): ClassResolveResult? {
+  val classQualifier = qualifier.resolveStatic()?.element as? PsiClass ?: return null
+  val processor = ReferenceExpressionClassProcessor(name, this)
+  classQualifier.processDeclarations(processor, ResolveState.initial(), null, this)
+  return processor.result
 }

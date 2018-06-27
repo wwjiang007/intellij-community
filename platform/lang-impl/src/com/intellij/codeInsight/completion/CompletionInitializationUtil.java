@@ -2,6 +2,7 @@
 package com.intellij.codeInsight.completion;
 
 import com.intellij.injected.editor.DocumentWindow;
+import com.intellij.lang.injection.InjectedLanguageManager;
 import com.intellij.openapi.application.WriteAction;
 import com.intellij.openapi.diagnostic.Logger;
 import com.intellij.openapi.editor.Caret;
@@ -21,6 +22,7 @@ import com.intellij.psi.PsiFile;
 import com.intellij.psi.impl.PsiFileEx;
 import com.intellij.psi.impl.source.PsiFileImpl;
 import com.intellij.psi.impl.source.tree.injected.InjectedLanguageUtil;
+import com.intellij.psi.util.PsiTreeUtil;
 import com.intellij.psi.util.PsiUtilBase;
 import com.intellij.reference.SoftReference;
 import org.jetbrains.annotations.NotNull;
@@ -82,8 +84,7 @@ public class CompletionInitializationUtil {
   }
 
   public static CompletionParameters prepareCompletionParameters(CompletionInitializationContext initContext,
-                                                                 CompletionProcessEx process) {
-    CompletionProcessEx indicator = (CompletionProcessEx) process;
+                                                                 CompletionProcessEx indicator) {
     OffsetsInFile hostCopyOffsets = insertDummyIdentifier(initContext, indicator, indicator.getHostOffsets());
     if (hostCopyOffsets == null) {
       return null;
@@ -93,7 +94,9 @@ public class CompletionInitializationUtil {
     OffsetsInFile finalOffsets = toInjectedIfAny(initContext.getFile(), hostCopyOffsets);
     indicator.registerChildDisposable(finalOffsets::getOffsets);
 
-    return createCompletionParameters(initContext, indicator, finalOffsets);
+    CompletionParameters parameters = createCompletionParameters(initContext, indicator, finalOffsets);
+    indicator.setParameters(parameters);
+    return parameters;
   }
 
   @NotNull
@@ -138,7 +141,7 @@ public class CompletionInitializationUtil {
     OffsetsInFile translatedOffsets = hostCopyOffsets.toInjectedIfAny(hostStartOffset);
     if (translatedOffsets != hostCopyOffsets) {
       PsiFile injected = translatedOffsets.getFile();
-      if (injected instanceof PsiFileImpl) {
+      if (injected instanceof PsiFileImpl && InjectedLanguageManager.getInstance(originalFile.getProject()).isInjectedFragment(originalFile)) {
         ((PsiFileImpl)injected).setOriginalFile(originalFile);
       }
       DocumentWindow documentWindow = InjectedLanguageUtil.getDocumentWindow(injected);
@@ -155,6 +158,9 @@ public class CompletionInitializationUtil {
   @NotNull
   private static PsiElement findCompletionPositionLeaf(OffsetsInFile offsets, int offset, PsiFile originalFile) {
     PsiElement insertedElement = offsets.getFile().findElementAt(offset);
+    if (insertedElement == null && offsets.getFile().getTextLength() == 0) {
+      insertedElement = PsiTreeUtil.getDeepestLast(offsets.getFile());
+    }
     CompletionAssertions.assertCompletionPositionPsiConsistent(offsets, offset, originalFile, insertedElement);
     return insertedElement;
   }

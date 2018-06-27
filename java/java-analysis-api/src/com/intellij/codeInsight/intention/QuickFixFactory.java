@@ -91,6 +91,8 @@ public abstract class QuickFixFactory {
 
   @NotNull public abstract IntentionAction createSurroundWithTryCatchFix(@NotNull PsiElement element);
 
+  @NotNull public abstract IntentionAction createAddExceptionToExistingCatch(@NotNull PsiElement element);
+
   @NotNull public abstract IntentionAction createGeneralizeCatchFix(@NotNull PsiElement element, @NotNull PsiClassType type);
 
   @NotNull public abstract IntentionAction createChangeToAppendFix(@NotNull IElementType sign, @NotNull PsiType type, @NotNull PsiAssignmentExpression assignment);
@@ -247,8 +249,18 @@ public abstract class QuickFixFactory {
 
   public abstract void registerFixesForUnusedParameter(@NotNull PsiParameter parameter, @NotNull Object highlightInfo);
 
+  /**
+   * Use {@link #createAddToDependencyInjectionAnnotationsFix(Project, String)} instead
+   */
+  @SuppressWarnings("unused")
+  @Deprecated
   @NotNull
-  public abstract IntentionAction createAddToDependencyInjectionAnnotationsFix(@NotNull Project project, @NotNull String qualifiedName, @NotNull String element);
+  public IntentionAction createAddToDependencyInjectionAnnotationsFix(@NotNull Project project, @NotNull String qualifiedName, @NotNull String element) {
+    return createAddToDependencyInjectionAnnotationsFix(project, qualifiedName);
+  }
+
+  @NotNull
+  public abstract IntentionAction createAddToDependencyInjectionAnnotationsFix(@NotNull Project project, @NotNull String qualifiedName);
 
   @NotNull
   public abstract IntentionAction createAddToImplicitlyWrittenFieldsFix(Project project, @NotNull String qualifiedName);
@@ -309,4 +321,7 @@ public abstract class QuickFixFactory {
 
   @Nullable
   public abstract IntentionAction createCreateClassInPackageInModuleFix(@NotNull Module module, @Nullable String packageName);
+  
+  public abstract IntentionAction createPushDownMethodFix();
+  
 }

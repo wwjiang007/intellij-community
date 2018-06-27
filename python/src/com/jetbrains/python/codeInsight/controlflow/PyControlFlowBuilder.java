@@ -489,11 +489,13 @@ public class PyControlFlowBuilder extends PyRecursiveElementVisitor {
       myBuilder.addEdge(myBuilder.prevInstruction, instruction);
     }
     myBuilder.checkPending(instruction);
-    myBuilder.prevInstruction = head;
-    if (elsePart != null && !isStaticallyTrue) {
+
+    if (elsePart != null) {
+      myBuilder.prevInstruction = !isStaticallyTrue ? head : null;
       elsePart.accept(this);
       myBuilder.addPendingEdge(node, myBuilder.prevInstruction);
     }
+
     myBuilder.flowAbrupted();
   }
 
@@ -866,9 +868,7 @@ public class PyControlFlowBuilder extends PyRecursiveElementVisitor {
           PsiTreeUtil.getParentOfType(element, PyRaiseStatement.class) != null) {
         myBuilder.addPendingEdge(node, instruction);
       }
-      else {
-        myBuilder.addPendingEdge(pendingScope, instruction);
-      }
+      myBuilder.addPendingEdge(pendingScope, instruction);
     });
   }
 

@@ -9,6 +9,7 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import java.io.File;
+import java.util.Date;
 import java.util.List;
 
 /**
@@ -23,6 +24,14 @@ public interface IdeaPluginDescriptor extends PluginDescriptor {
   String getChangeNotes();
 
   String getName();
+
+  @Nullable
+  String getProductCode();
+
+  @Nullable
+  Date getReleaseDate();
+
+  int getReleaseVersion();
 
   @NotNull
   PluginId[] getDependentPluginIds();
@@ -64,6 +73,7 @@ public interface IdeaPluginDescriptor extends PluginDescriptor {
   boolean getUseIdeaClassLoader();
 
   /** @deprecated doesn't make sense for installed plugins; use PluginNode#getDownloads (to be removed in IDEA 2019) */
+  @Deprecated
   String getDownloads();
 
   String getSinceBuild();

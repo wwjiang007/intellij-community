@@ -19,6 +19,7 @@ import org.jetbrains.plugins.groovy.lang.psi.impl.statements.expressions.TypesUt
 import org.jetbrains.plugins.groovy.lang.psi.impl.synthetic.GrLightField
 import org.jetbrains.plugins.groovy.lang.psi.impl.synthetic.GrLightMethodBuilder
 import org.jetbrains.plugins.groovy.lang.psi.impl.synthetic.GrLightParameter
+import org.jetbrains.plugins.groovy.lang.psi.patterns.GroovyClosurePattern
 import org.jetbrains.plugins.groovy.lang.psi.patterns.groovyClosure
 import org.jetbrains.plugins.groovy.lang.psi.patterns.psiMethod
 import org.jetbrains.plugins.groovy.lang.resolve.ResolveUtil
@@ -32,7 +33,7 @@ import org.jetbrains.plugins.groovy.lang.resolve.delegatesTo.DelegatesToInfo
 class GradleArtifactsContributor : GradleMethodContextContributor {
 
   companion object {
-    val artifactsClosure = groovyClosure().inMethod(psiMethod(GRADLE_API_PROJECT, "artifacts"))
+    val artifactsClosure: GroovyClosurePattern = groovyClosure().inMethod(psiMethod(GRADLE_API_PROJECT, "artifacts"))
   }
 
   override fun process(methodCallInfo: List<String>,
@@ -42,7 +43,7 @@ class GradleArtifactsContributor : GradleMethodContextContributor {
     val methodName = if (methodCallInfo.isNotEmpty()) methodCallInfo[0] else null
     if (methodName != null && place is GrReferenceExpression && psiElement().inside(artifactsClosure).accepts(place)) {
       val text = place.text
-      if (!methodCallInfo.contains(text) && place is GrReferenceExpression) {
+      if (!methodCallInfo.contains(text)) {
         val myPsi = GrLightField(text, JAVA_LANG_OBJECT, place)
         processor.execute(myPsi, state)
         return false
@@ -67,7 +68,8 @@ class GradleArtifactsContributor : GradleMethodContextContributor {
                                       place: PsiElement): Boolean {
     val name = ResolveUtil.getNameHint(processor) ?: return true
     val groovyPsiManager = GroovyPsiManager.getInstance(place.project)
-    val artifactHandlerClass = JavaPsiFacade.getInstance(place.project).findClass(GRADLE_API_ARTIFACT_HANDLER, place.resolveScope) ?: return true
+    val artifactHandlerClass = JavaPsiFacade.getInstance(place.project).findClass(GRADLE_API_ARTIFACT_HANDLER, place.resolveScope)
+                               ?: return true
 
     val call = PsiTreeUtil.getParentOfType(place, GrMethodCall::class.java) ?: return true
     val returnClass = groovyPsiManager.createTypeByFQClassName(GRADLE_API_PUBLISH_ARTIFACT, place.resolveScope) ?: return true

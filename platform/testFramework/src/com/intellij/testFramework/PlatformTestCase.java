@@ -8,11 +8,13 @@ import com.intellij.ide.highlighter.ProjectFileType;
 import com.intellij.ide.startup.impl.StartupManagerImpl;
 import com.intellij.idea.IdeaLogger;
 import com.intellij.idea.IdeaTestApplication;
+import com.intellij.mock.MockApplication;
 import com.intellij.openapi.Disposable;
 import com.intellij.openapi.actionSystem.DataProvider;
 import com.intellij.openapi.application.ApplicationManager;
 import com.intellij.openapi.application.PathManager;
 import com.intellij.openapi.application.WriteAction;
+import com.intellij.openapi.application.impl.LaterInvocator;
 import com.intellij.openapi.command.CommandProcessor;
 import com.intellij.openapi.command.WriteCommandAction;
 import com.intellij.openapi.command.impl.DocumentReferenceManagerImpl;
@@ -88,8 +90,7 @@ import java.util.Collection;
 import java.util.HashSet;
 import java.util.Objects;
 import java.util.Set;
-
-import static com.intellij.testFramework.TemporaryDirectoryKt.generateTemporaryPath;
+import java.util.concurrent.TimeUnit;
 
 /**
  * @author yole
@@ -117,6 +118,7 @@ public abstract class PlatformTestCase extends UsefulTestCase implements DataPro
   private static Set<VirtualFile> ourEternallyLivingFilesCache;
   private SdkLeakTracker myOldSdks;
   private VirtualFilePointerTracker myVirtualFilePointerTracker;
+  private CodeStyleSettingsTracker myCodeStyleSettingsTracker;
 
 
   @NotNull
@@ -156,7 +158,7 @@ public abstract class PlatformTestCase extends UsefulTestCase implements DataPro
   private static final String[] PREFIX_CANDIDATES = {
     "Rider", "GoLand",
     null,
-    "AppCode", "CLion", "CidrCommon",
+    "AppCode", "CLion", "CidrCommonTests",
     "DataGrip",
     "Python", "PyCharmCore",
     "Ruby",
@@ -215,7 +217,8 @@ public abstract class PlatformTestCase extends UsefulTestCase implements DataPro
 
     setUpProject();
 
-    storeSettings();
+    myCodeStyleSettingsTracker = new CodeStyleSettingsTracker(
+      () -> isStressTest() || ApplicationManager.getApplication() == null || ApplicationManager.getApplication() instanceof MockApplication ? null : CodeStyle.getDefaultSettings());
     ourTestCase = this;
     if (myProject != null) {
       ProjectManagerEx.getInstanceEx().openTestProject(myProject);
@@ -306,7 +309,7 @@ public abstract class PlatformTestCase extends UsefulTestCase implements DataPro
         int hashCode = System.identityHashCode(leaked);
         leakers.append("Leaked project found:").append(leaked).append("; hash: ").append(hashCode).append("; place: ")
                .append(getCreationPlace(leaked)).append("\n");
-        leakers.append(backLink+"\n");
+        leakers.append(backLink).append("\n");
         leakers.append(";-----\n");
 
         hashCodes.remove(hashCode);
@@ -322,7 +325,6 @@ public abstract class PlatformTestCase extends UsefulTestCase implements DataPro
   @NotNull
   @TestOnly
   public static String getCreationPlace(@NotNull Project project) {
-    String place = project.getUserData(CREATION_PLACE);
     Object base;
     try {
       base = project.isDisposed() ? "" : project.getBaseDir();
@@ -330,7 +332,8 @@ public abstract class PlatformTestCase extends UsefulTestCase implements DataPro
     catch (Exception e) {
       base = " (" + e + " while getting base dir)";
     }
-    return project + (place != null ? place : "") + base;
+    String place = project.getUserData(CREATION_PLACE);
+    return project + " " +(place == null ? "" : place) + base;
   }
 
   protected void runStartupActivities() {
@@ -362,7 +365,8 @@ public abstract class PlatformTestCase extends UsefulTestCase implements DataPro
       }
     }
 
-    Path tempFile = generateTemporaryPath(FileUtil.sanitizeFileName(getName(), false) + (isDirectoryBasedProject ? "" : ProjectFileType.DOT_DEFAULT_EXTENSION));
+    Path tempFile = TemporaryDirectoryKt
+      .generateTemporaryPath(FileUtil.sanitizeFileName(getName(), false) + (isDirectoryBasedProject ? "" : ProjectFileType.DOT_DEFAULT_EXTENSION));
     myFilesToDelete.add(tempFile.toFile());
     return tempFile;
   }
@@ -509,7 +513,7 @@ public abstract class PlatformTestCase extends UsefulTestCase implements DataPro
       })
       .append(() -> disposeProject())
       .append(() -> UIUtil.dispatchAllInvocationEvents())
-      .append(() -> checkForSettingsDamage())
+      .append(() -> myCodeStyleSettingsTracker.checkForSettingsDamage())
       .append(() -> {
         if (project != null) {
           InjectedLanguageManagerImpl.checkInjectorsAreDisposed(project);
@@ -520,6 +524,8 @@ public abstract class PlatformTestCase extends UsefulTestCase implements DataPro
 
         getTempDir().deleteAll();
         LocalFileSystem.getInstance().refreshIoFiles(myFilesToDelete);
+        LaterInvocator.dispatchPendingFlushes();
+        ((FileBasedIndexImpl)FileBasedIndex.getInstance()).waitForVfsEventsExecuted(1, TimeUnit.MINUTES);
       })
       .append(() -> {
         if (!myAssertionsInTestDetected) {
@@ -597,14 +603,8 @@ public abstract class PlatformTestCase extends UsefulTestCase implements DataPro
     resetClassFields(aClass.getSuperclass());
   }
 
-  private String getFullName() {
-    return getClass().getName() + "." + getName();
-  }
-
   protected void setUpJdk() {
-    //final ProjectJdkEx jdk = ProjectJdkUtil.getDefaultJdk("java 1.4");
     final Sdk jdk = getTestProjectJdk();
-//    ProjectJdkImpl jdk = ProjectJdkTable.getInstance().addJdk(defaultJdk);
     Module[] modules = ModuleManager.getInstance(myProject).getModules();
     for (Module module : modules) {
       ModuleRootModificationUtil.setModuleSdk(module, jdk);
@@ -631,8 +631,7 @@ public abstract class PlatformTestCase extends UsefulTestCase implements DataPro
           resetAllFields();
         });
       }
-      catch (Throwable e) {
-        // Ignore
+      catch (Throwable ignored) {
       }
     }
   }

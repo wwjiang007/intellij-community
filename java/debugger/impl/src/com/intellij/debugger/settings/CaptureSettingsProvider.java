@@ -41,33 +41,17 @@ public class CaptureSettingsProvider {
     addInsert("java/util/concurrent/FutureTask", "run", THIS_KEY);
     addInsert("java/util/concurrent/FutureTask", "runAndReset", THIS_KEY);
 
-    addCapture("java/util/concurrent/CompletableFuture", "supplyAsync", FIRST_PARAM);
-    AgentInsertPoint point = new AgentInsertPoint("java/util/concurrent/CompletableFuture$AsyncSupply",
-                                                  "run",
-                                                  ANY,
-                                                  new FieldKeyProvider("java/util/concurrent/CompletableFuture$AsyncSupply", "fn"));
-    point.myInsertPoint.myInsertMethodName = "run$$$capture";
-    point.myInsertPoint.myInsertKeyExpression = "f";
-    INSERT_POINTS.add(point);
+    addCapture("java/util/concurrent/CompletableFuture$AsyncSupply", "<init>", THIS_KEY);
+    addInsert("java/util/concurrent/CompletableFuture$AsyncSupply", "run", THIS_KEY);
 
-    addCapture("java/util/concurrent/CompletableFuture", "runAsync", FIRST_PARAM);
-    point = new AgentInsertPoint("java/util/concurrent/CompletableFuture$AsyncRun",
-                                 "run",
-                                 ANY,
-                                 new FieldKeyProvider("java/util/concurrent/CompletableFuture$AsyncRun", "fn"));
-    point.myInsertPoint.myInsertMethodName = "run$$$capture";
-    point.myInsertPoint.myInsertKeyExpression = "f";
-    INSERT_POINTS.add(point);
+    addCapture("java/util/concurrent/CompletableFuture$AsyncRun", "<init>", THIS_KEY);
+    addInsert("java/util/concurrent/CompletableFuture$AsyncRun", "run", THIS_KEY);
 
-    addCapture("java/util/concurrent/CompletableFuture", "thenAcceptAsync", FIRST_PARAM);
-    addInsert("java/util/concurrent/CompletableFuture$UniAccept",
-              "tryFire",
-              new FieldKeyProvider("java/util/concurrent/CompletableFuture$UniAccept", "fn"));
+    addCapture("java/util/concurrent/CompletableFuture$UniAccept", "<init>", THIS_KEY);
+    addInsert("java/util/concurrent/CompletableFuture$UniAccept", "tryFire", THIS_KEY);
 
-    addCapture("java/util/concurrent/CompletableFuture", "thenRunAsync", FIRST_PARAM);
-    addInsert("java/util/concurrent/CompletableFuture$UniRun",
-              "tryFire",
-              new FieldKeyProvider("java/util/concurrent/CompletableFuture$UniRun", "fn"));
+    addCapture("java/util/concurrent/CompletableFuture$UniRun", "<init>", THIS_KEY);
+    addInsert("java/util/concurrent/CompletableFuture$UniRun", "tryFire", THIS_KEY);
 
     // netty
     addCapture("io/netty/util/concurrent/SingleThreadEventExecutor", "addTask", FIRST_PARAM);
@@ -85,6 +69,11 @@ public class CaptureSettingsProvider {
     addCapture("akka/actor/RepointableActorRef", "$bang", FIRST_PARAM);
     addCapture("akka/actor/LocalActorRef", "$bang", FIRST_PARAM);
     addInsert("akka/actor/Actor$class", "aroundReceive", param(2));
+
+    // JavaFX
+    addCapture("com/sun/glass/ui/InvokeLaterDispatcher", "invokeLater", FIRST_PARAM);
+    addInsert("com/sun/glass/ui/InvokeLaterDispatcher$Future", "run",
+              new FieldKeyProvider("com/sun/glass/ui/InvokeLaterDispatcher$Future", "runnable"));
 
     IDE_INSERT_POINTS = StreamEx.of(INSERT_POINTS).map(p -> p.myInsertPoint).nonNull().toList();
   }

@@ -322,7 +322,6 @@ public class DaemonCodeAnalyzerImpl extends DaemonCodeAnalyzerEx implements Pers
 
     Project project = file.getProject();
     FileStatusMap fileStatusMap = getFileStatusMap();
-    fileStatusMap.allowDirt(canChangeDocument);
 
     Map<FileEditor, HighlightingPass[]> map = new HashMap<>();
     for (TextEditor textEditor : textEditors) {
@@ -353,6 +352,7 @@ public class DaemonCodeAnalyzerImpl extends DaemonCodeAnalyzerEx implements Pers
     final DaemonProgressIndicator progress = createUpdateProgress(map.keySet());
     myPassExecutorService.submitPasses(map, progress);
     try {
+      fileStatusMap.allowDirt(canChangeDocument);
       long start = System.currentTimeMillis();
       while (progress.isRunning() && System.currentTimeMillis() < start + 10*60*1000) {
         wrap(() -> {
@@ -404,7 +404,7 @@ public class DaemonCodeAnalyzerImpl extends DaemonCodeAnalyzerEx implements Pers
         throw new IllegalStateException("You must not perform PSI modifications from inside highlighting");
       });
     if (!canChangeDocument) {
-      myProject.getMessageBus().connect(disposable).subscribe(DaemonCodeAnalyzer.DAEMON_EVENT_TOPIC, new DaemonListenerAdapter() {
+      myProject.getMessageBus().connect(disposable).subscribe(DaemonCodeAnalyzer.DAEMON_EVENT_TOPIC, new DaemonListener() {
         @Override
         public void daemonCancelEventOccurred(@NotNull String reason) {
           throw new IllegalStateException("You must not cancel daemon inside highlighting test: "+reason);
@@ -610,7 +610,6 @@ public class DaemonCodeAnalyzerImpl extends DaemonCodeAnalyzerEx implements Pers
     boolean restart = toRestartAlarm && !myDisposed && myInitialized;
 
     if (restart && myUpdateRunnableFuture.isDone()) {
-      myUpdateRunnableFuture.cancel(false);
       myUpdateRunnableFuture = myAlarm.schedule(myUpdateRunnable, mySettings.AUTOREPARSE_DELAY, TimeUnit.MILLISECONDS);
     }
 
@@ -618,7 +617,7 @@ public class DaemonCodeAnalyzerImpl extends DaemonCodeAnalyzerEx implements Pers
   }
 
   // return true if the progress really was canceled
-  private synchronized boolean cancelUpdateProgress(boolean toRestartAlarm, @NonNls String reason) {
+  private synchronized boolean cancelUpdateProgress(boolean toRestartAlarm, @NotNull @NonNls String reason) {
     DaemonProgressIndicator updateProgress = myUpdateProgress;
     if (myDisposed) return false;
     boolean wasCanceled = updateProgress.isCanceled();
@@ -678,7 +677,7 @@ public class DaemonCodeAnalyzerImpl extends DaemonCodeAnalyzerEx implements Pers
 
     if (foundInfoList.isEmpty()) return null;
     if (foundInfoList.size() == 1) return foundInfoList.get(0);
-    return new HighlightInfoComposite(foundInfoList);
+    return HighlightInfoComposite.create(foundInfoList);
   }
 
   private static boolean isOffsetInsideHighlightInfo(int offset, @NotNull HighlightInfo info, boolean includeFixRange) {
@@ -759,19 +758,34 @@ public class DaemonCodeAnalyzerImpl extends DaemonCodeAnalyzerEx implements Pers
     }
   }
 
-  private final Runnable submitPassesRunnable = new Runnable() {
+  // made this class static and fields cleareable to avoid leaks when this object stuck in invokeLater queue
+  private static class UpdateRunnable implements Runnable {
+    private Project myProject;
+    private UpdateRunnable(@NotNull Project project) {
+      myProject = project;
+    }
+
     @Override
     public void run() {
-      boolean updateByTimerEnabled = isUpdateByTimerEnabled();
-      PassExecutorService.log(getUpdateProgress(), null, "Update Runnable. myUpdateByTimerEnabled:",
-                              updateByTimerEnabled, " something disposed:",
-                              PowerSaveMode.isEnabled() || myDisposed || !myProject.isInitialized(), " activeEditors:",
-                              myProject.isDisposed() ? null : getSelectedEditors());
-      if (!updateByTimerEnabled) return;
-      if (myDisposed) return;
       ApplicationManager.getApplication().assertIsDispatchThread();
+      Project project = myProject;
+      DaemonCodeAnalyzerImpl dca;
+      if (project == null ||
+          !project.isInitialized() ||
+          project.isDisposed() ||
+          PowerSaveMode.isEnabled() ||
+          (dca = (DaemonCodeAnalyzerImpl)DaemonCodeAnalyzer.getInstance(project)).myDisposed) {
+        return;
+      }
 
-      final Collection<FileEditor> activeEditors = getSelectedEditors();
+      final Collection<FileEditor> activeEditors = dca.getSelectedEditors();
+      boolean updateByTimerEnabled = dca.isUpdateByTimerEnabled();
+      PassExecutorService.log(dca.getUpdateProgress(), null, "Update Runnable. myUpdateByTimerEnabled:",
+                              updateByTimerEnabled, " something disposed:",
+                              PowerSaveMode.isEnabled() || !myProject.isInitialized(), " activeEditors:",
+                              activeEditors);
+      if (!updateByTimerEnabled) return;
+
       if (activeEditors.isEmpty()) return;
 
       if (ApplicationManager.getApplication().isWriteAccessAllowed()) {
@@ -779,9 +793,10 @@ public class DaemonCodeAnalyzerImpl extends DaemonCodeAnalyzerEx implements Pers
         // we'll restart when the write action finish
         return;
       }
-      final PsiDocumentManagerBase documentManager = (PsiDocumentManagerBase)myPsiDocumentManager;
+      final PsiDocumentManagerBase documentManager = (PsiDocumentManagerBase)dca.myPsiDocumentManager;
       if (documentManager.hasUncommitedDocuments()) {
-        documentManager.cancelAndRunWhenAllCommitted("restart daemon when all committed", this);
+        // restart when everything committed
+        AutoPopupController.runTransactionWithEverythingCommitted(myProject, this);
         return;
       }
       if (RefResolveService.ENABLED &&
@@ -799,48 +814,27 @@ public class DaemonCodeAnalyzerImpl extends DaemonCodeAnalyzerEx implements Pers
           passes.put(fileEditor, highlightingPasses);
         }
       }
-      // cancel all after calling createPasses() since there are perverts {@link com.intellij.util.xml.ui.DomUIFactoryImpl} who are changing PSI there
-      cancelUpdateProgress(true, "Cancel by alarm");
-      myUpdateRunnableFuture.cancel(false);
-      DaemonProgressIndicator progress = createUpdateProgress(passes.keySet());
-      myPassExecutorService.submitPasses(passes, progress);
-    }
-  };
 
-  // made this class static and fields cleareable to avoid leaks when this object stuck in invokeLater queue
-  private static class UpdateRunnable implements Runnable {
-    private Project myProject;
-    private UpdateRunnable(@NotNull Project project) {
-      myProject = project;
-    }
-
-    @Override
-    public void run() {
-      ApplicationManager.getApplication().assertIsDispatchThread();
-      Project project = myProject;
-      DaemonCodeAnalyzerImpl daemonCodeAnalyzer;
-      if (project == null ||
-          !project.isInitialized() ||
-          project.isDisposed() ||
-          PowerSaveMode.isEnabled() ||
-          (daemonCodeAnalyzer = (DaemonCodeAnalyzerImpl)DaemonCodeAnalyzer.getInstance(project)).myDisposed) {
-        return;
-      }
-
+      boolean hasPasses = false;
       // wait for heavy processing to stop, re-schedule daemon but not too soon
       if (HeavyProcessLatch.INSTANCE.isRunning()) {
-        HeavyProcessLatch.INSTANCE.executeOutOfHeavyProcess(() ->
-          daemonCodeAnalyzer.stopProcess(true, "re-scheduled to execute after heavy processing finished"));
-        return;
+        for (Map.Entry<FileEditor, HighlightingPass[]> entry : passes.entrySet()) {
+          HighlightingPass[] filtered = Arrays.stream(entry.getValue()).filter(DumbService::isDumbAware).toArray(HighlightingPass[]::new);
+          entry.setValue(filtered);
+          hasPasses |= filtered.length != 0;
+        }
+        if (!hasPasses) {
+          HeavyProcessLatch.INSTANCE.executeOutOfHeavyProcess(() ->
+            dca.stopProcess(true, "re-scheduled to execute after heavy processing finished"));
+          return;
+        }
       }
-      Editor activeEditor = FileEditorManager.getInstance(project).getSelectedTextEditor();
 
-      if (activeEditor == null) {
-        AutoPopupController.runTransactionWithEverythingCommitted(project, daemonCodeAnalyzer.submitPassesRunnable);
-      }
-      else {
-        ((PsiDocumentManagerBase)PsiDocumentManager.getInstance(project)).cancelAndRunWhenAllCommitted("start daemon when all committed", daemonCodeAnalyzer.submitPassesRunnable);
-      }
+      // cancel all after calling createPasses() since there are perverts {@link com.intellij.util.xml.ui.DomUIFactoryImpl} who are changing PSI there
+      dca.cancelUpdateProgress(true, "Cancel by alarm");
+      dca.myUpdateRunnableFuture.cancel(false);
+      DaemonProgressIndicator progress = dca.createUpdateProgress(passes.keySet());
+      dca.myPassExecutorService.submitPasses(passes, progress);
     }
 
     private void clearFieldsOnDispose() {

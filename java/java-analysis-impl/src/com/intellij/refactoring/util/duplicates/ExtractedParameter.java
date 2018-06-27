@@ -66,27 +66,19 @@ public class ExtractedParameter {
   }
 
   @NotNull
-  public ExtractedParameter mapPatternToItself(@NotNull Match match) {
-    ExtractableExpressionPart copy = myPattern.copy();
-    ExtractableExpressionPart deepCopy = myPattern.deepCopy();
-
-    ExtractedParameter parameter = new ExtractedParameter(copy, deepCopy, copy.myType);
-    parameter.myPatternUsages.addAll(myPatternUsages);
-
-    match.getExtractedParameters().add(parameter);
-    return parameter;
+  public ExtractedParameter copyWithCandidateUsage(@NotNull PsiExpression candidateUsage) {
+    ExtractedParameter result = new ExtractedParameter(myPattern, ExtractableExpressionPart.fromUsage(candidateUsage, myType), myType);
+    result.myPatternUsages.addAll(myPatternUsages);
+    return result;
   }
 
   @NotNull
   public String getLocalVariableTypeText() {
-    PsiType type = myType;
-    if (myType instanceof PsiEllipsisType) {
-      type = ((PsiEllipsisType)myType).toArrayType();
-    }
+    PsiType type = GenericsUtil.getVariableTypeByExpressionType(myType);
     return type.getCanonicalText();
   }
 
-  private void addUsages(ExtractableExpressionPart patternPart) {
+  public void addUsages(ExtractableExpressionPart patternPart) {
     myPatternUsages.add(patternPart.getUsage());
   }
 

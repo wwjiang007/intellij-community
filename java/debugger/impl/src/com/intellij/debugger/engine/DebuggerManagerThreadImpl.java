@@ -13,7 +13,6 @@ import com.intellij.openapi.diagnostic.Logger;
 import com.intellij.openapi.progress.ProgressManager;
 import com.intellij.openapi.progress.util.ProgressIndicatorListenerAdapter;
 import com.intellij.openapi.progress.util.ProgressWindow;
-import com.intellij.openapi.progress.util.ProgressWindowWithNotification;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.util.Disposer;
 import com.intellij.util.concurrency.AppExecutorUtil;
@@ -21,7 +20,7 @@ import com.sun.jdi.VMDisconnectedException;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.TestOnly;
 
-import java.util.concurrent.*;
+import java.util.concurrent.TimeUnit;
 
 /**
  * @author lex
@@ -147,11 +146,6 @@ public class DebuggerManagerThreadImpl extends InvokeAndWaitThread<DebuggerComma
     }
   }
 
-  @Deprecated
-  public void startProgress(final DebuggerCommandImpl command, final ProgressWindowWithNotification progressWindow) {
-    startProgress(command, (ProgressWindow)progressWindow);
-  }
-
   public void startProgress(DebuggerCommandImpl command, ProgressWindow progressWindow) {
     new ProgressIndicatorListenerAdapter() {
       @Override
@@ -200,7 +194,7 @@ public class DebuggerManagerThreadImpl extends InvokeAndWaitThread<DebuggerComma
       SuspendContextCommand suspendContextCommand = (SuspendContextCommand)command;
       schedule(new SuspendContextCommandImpl((SuspendContextImpl)suspendContextCommand.getSuspendContext()) {
           @Override
-          public void contextAction(@NotNull SuspendContextImpl suspendContext) throws Exception {
+          public void contextAction(@NotNull SuspendContextImpl suspendContext) {
             command.action();
           }
 

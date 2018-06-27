@@ -26,7 +26,6 @@ import com.intellij.codeInsight.lookup.impl.LookupImpl;
 import com.intellij.codeInsight.navigation.GotoImplementationHandler;
 import com.intellij.codeInsight.navigation.GotoTargetHandler;
 import com.intellij.codeInsight.template.Template;
-import com.intellij.codeInsight.template.TemplateManager;
 import com.intellij.codeInsight.template.impl.TemplateManagerImpl;
 import com.intellij.codeInsight.template.impl.TemplateSettings;
 import com.intellij.codeInsight.template.impl.TemplateState;
@@ -40,6 +39,7 @@ import com.intellij.openapi.actionSystem.DataContext;
 import com.intellij.openapi.command.WriteCommandAction;
 import com.intellij.openapi.editor.Editor;
 import com.intellij.openapi.project.Project;
+import com.intellij.openapi.ui.JBListUpdater;
 import com.intellij.openapi.ui.popup.JBPopup;
 import com.intellij.openapi.util.Condition;
 import com.intellij.openapi.util.Disposer;
@@ -54,7 +54,6 @@ import com.intellij.refactoring.rename.inplace.VariableInplaceRenameHandler;
 import com.intellij.testFramework.TestDataFile;
 import com.intellij.ui.CollectionListModel;
 import com.intellij.ui.components.JBList;
-import com.intellij.ui.popup.AbstractPopup;
 import com.intellij.ui.popup.ComponentPopupBuilderImpl;
 import com.intellij.ui.speedSearch.NameFilteringListModel;
 import com.intellij.util.Function;
@@ -191,9 +190,9 @@ public class CodeInsightTestUtil {
   @TestOnly
   public static void doInlineRename(VariableInplaceRenameHandler handler, final String newName, @NotNull Editor editor, PsiElement elementAtCaret) {
     Project project = editor.getProject();
-    TemplateManagerImpl templateManager = (TemplateManagerImpl)TemplateManager.getInstance(project);
+    Disposable disposable = Disposer.newDisposable();
     try {
-      templateManager.setTemplateTesting(true);
+      TemplateManagerImpl.setTemplateTesting(project, disposable);
       handler.doRename(elementAtCaret, editor, DataManager.getInstance().getDataContext(editor.getComponent()));
       if (editor instanceof EditorWindow) {
         editor = ((EditorWindow)editor).getDelegate();
@@ -211,7 +210,7 @@ public class CodeInsightTestUtil {
       state.gotoEnd(false);
     }
     finally {
-      templateManager.setTemplateTesting(false);
+      Disposer.dispose(disposable);
     }
   }
 
@@ -252,7 +251,7 @@ public class CodeInsightTestUtil {
       list.setModel(model);
       list.setModel(new NameFilteringListModel(list, Function.ID, Condition.FALSE, String::new));
       JBPopup popup = new ComponentPopupBuilderImpl(list, null).createPopup();
-      data.listUpdaterTask.init((AbstractPopup)popup, list, new Ref<>());
+      data.listUpdaterTask.init(popup, new JBListUpdater(list), new Ref<>());
 
       data.listUpdaterTask.queue();
 

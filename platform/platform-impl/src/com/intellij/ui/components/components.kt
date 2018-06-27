@@ -4,6 +4,7 @@
 package com.intellij.ui.components
 
 import com.intellij.BundleBase
+import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.fileChooser.FileChooserDescriptor
 import com.intellij.openapi.fileChooser.FileChooserFactory
 import com.intellij.openapi.project.Project
@@ -12,6 +13,7 @@ import com.intellij.openapi.ui.ComponentWithBrowseButton.BrowseFolderActionListe
 import com.intellij.openapi.ui.DialogWrapper
 import com.intellij.openapi.ui.DialogWrapper.IdeModalityType
 import com.intellij.openapi.ui.TextComponentAccessor
+import com.intellij.openapi.ui.ValidationInfo
 import com.intellij.openapi.ui.ex.MultiLineLabel
 import com.intellij.openapi.vcs.changes.issueLinks.LinkMouseListenerBase
 import com.intellij.openapi.vfs.VirtualFile
@@ -61,7 +63,8 @@ fun Link(text: String, style: UIUtil.ComponentStyle? = null, action: () -> Unit)
   return result
 }
 
-fun noteComponent(note: String): JComponent {
+@JvmOverloads
+fun noteComponent(note: String, linkHandler: ((url: String) -> Unit)? = null): JComponent {
   val matcher = HREF_PATTERN.matcher(note)
   if (!matcher.find()) {
     return Label(note)
@@ -73,7 +76,9 @@ fun noteComponent(note: String): JComponent {
     if (matcher.start() != prev) {
       noteComponent.append(note.substring(prev, matcher.start()))
     }
-    noteComponent.append(matcher.group(2), LINK_TEXT_ATTRIBUTES, SimpleColoredComponent.BrowserLauncherTag(matcher.group(1)))
+
+    val linkUrl = matcher.group(1)
+    noteComponent.append(matcher.group(2), LINK_TEXT_ATTRIBUTES, if (linkHandler == null) SimpleColoredComponent.BrowserLauncherTag(linkUrl) else Runnable { linkHandler(linkUrl) })
     prev = matcher.end()
   }
   while (matcher.find())
@@ -99,7 +104,7 @@ fun htmlComponent(text: String = "", font: Font = UIUtil.getLabelFont(), backgro
   return pane
 }
 
-fun RadioButton(text: String) = JRadioButton(BundleBase.replaceMnemonicAmpersand(text))
+fun RadioButton(text: String): JRadioButton = JRadioButton(BundleBase.replaceMnemonicAmpersand(text))
 
 fun CheckBox(text: String, selected: Boolean = false, toolTip: String? = null): JCheckBox {
   val component = JCheckBox(BundleBase.replaceMnemonicAmpersand(text), selected)
@@ -120,6 +125,9 @@ private fun setTitledBorder(title: String, panel: JPanel) {
   border.acceptMinimumSize(panel)
 }
 
+/**
+ * Consider using [UI DSL](https://github.com/JetBrains/intellij-community/tree/master/platform/platform-impl/src/com/intellij/ui/layout#readme) to create panel.
+ */
 fun dialog(title: String,
            panel: JComponent,
            resizable: Boolean = false,
@@ -129,7 +137,7 @@ fun dialog(title: String,
            parent: Component? = null,
            errorText: String? = null,
            modality: IdeModalityType = IdeModalityType.IDE,
-           ok: (() -> Boolean)? = null): DialogWrapper {
+           ok: (() -> List<ValidationInfo>?)? = null): DialogWrapper {
   return object: DialogWrapper(project, parent, true, modality) {
     init {
       setTitle(title)
@@ -149,8 +157,16 @@ fun dialog(title: String,
     override fun getPreferredFocusedComponent() = focusedComponent
 
     override fun doOKAction() {
-      if (okAction.isEnabled && (ok == null || ok())) {
+      if (!okAction.isEnabled) {
+        return
+      }
+
+      val validationInfoList = ok?.invoke()
+      if (validationInfoList == null || validationInfoList.isEmpty()) {
         super.doOKAction()
+      }
+      else {
+        setErrorInfoAll(validationInfoList)
       }
     }
   }
@@ -164,6 +180,11 @@ fun <T : JComponent> installFileCompletionAndBrowseDialog(project: Project?,
                                                           fileChooserDescriptor: FileChooserDescriptor,
                                                           textComponentAccessor: TextComponentAccessor<T>,
                                                           fileChosen: ((chosenFile: VirtualFile) -> String)? = null) {
+  if (ApplicationManager.getApplication() == null) {
+    // tests
+    return
+  }
+
   component.addActionListener(
       object : BrowseFolderActionListener<T>(browseDialogTitle, null, component, project, fileChooserDescriptor, textComponentAccessor) {
         override fun onFileChosen(chosenFile: VirtualFile) {

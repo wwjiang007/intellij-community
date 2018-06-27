@@ -123,16 +123,6 @@ public class UpdateHighlightersUtil {
     setHighlightersInRange(project, document, range, colorsScheme, new ArrayList<>(highlights), (MarkupModelEx)markup, group);
   }
 
-  @Deprecated //for teamcity
-  public static void setHighlightersToEditor(@NotNull Project project,
-                                             @NotNull Document document,
-                                             int startOffset,
-                                             int endOffset,
-                                             @NotNull Collection<HighlightInfo> highlights,
-                                             int group) {
-    setHighlightersToEditor(project, document, startOffset, endOffset, highlights, null, group);
-  }
-
   // set highlights inside startOffset,endOffset but outside priorityRange
   static void setHighlightersOutsideRange(@NotNull final Project project,
                                           @NotNull final Document document,
@@ -372,10 +362,12 @@ public class UpdateHighlightersUtil {
       markup.changeAttributesInBatch(highlighter, changeAttributes);
     }
 
-    boolean attributesSet = Comparing.equal(infoAttributes, highlighter.getTextAttributes());
-    assert attributesSet : "Info: " + infoAttributes +
-                           "; colorsScheme: " + (colorsScheme == null ? "[global]" : colorsScheme.getName()) +
-                           "; highlighter:" + highlighter.getTextAttributes();
+    if (infoAttributes != null) {
+      boolean attributesSet = Comparing.equal(infoAttributes, highlighter.getTextAttributes());
+      assert attributesSet : "Info: " + infoAttributes +
+                             "; colorsScheme: " + (colorsScheme == null ? "[global]" : colorsScheme.getName()) +
+                             "; highlighter:" + highlighter.getTextAttributes();
+    }
   }
 
   private static int getLayer(@NotNull HighlightInfo info, @NotNull SeverityRegistrar severityRegistrar) {

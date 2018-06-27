@@ -17,6 +17,7 @@ import com.intellij.openapi.util.NullableLazyValue;
 import com.intellij.openapi.util.Pair;
 import com.intellij.openapi.util.text.StringUtil;
 import com.intellij.util.ArrayUtil;
+import com.intellij.util.ObjectUtils;
 import com.intellij.util.SmartList;
 import com.intellij.util.containers.ContainerUtil;
 import com.intellij.util.containers.MultiMap;
@@ -33,6 +34,8 @@ import java.io.File;
 import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.net.URL;
+import java.text.ParseException;
+import java.text.SimpleDateFormat;
 import java.util.*;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -56,6 +59,13 @@ public class IdeaPluginDescriptorImpl implements IdeaPluginDescriptor {
   };
   private String myName;
   private PluginId myId;
+
+  @Nullable
+  private String myProductCode;
+  @Nullable
+  private Date myReleaseDate;
+  private int myReleaseVersion;
+
   private String myResourceBundleBaseName;
   private String myChangeNotes;
   private String myVersion;
@@ -64,7 +74,7 @@ public class IdeaPluginDescriptorImpl implements IdeaPluginDescriptor {
   private String myVendorUrl;
   private String myVendorLogoPath;
   private String myCategory;
-  private String url;
+  private String myUrl;
   private PluginId[] myDependencies = PluginId.EMPTY_ARRAY;
   private PluginId[] myOptionalDependencies = PluginId.EMPTY_ARRAY;
   private Map<PluginId, List<String>> myOptionalConfigs;
@@ -141,6 +151,7 @@ public class IdeaPluginDescriptorImpl implements IdeaPluginDescriptor {
   }
 
   /** @deprecated changing a plugin path after loading is not expected (to be removed in IDEA 2019) */
+  @Deprecated
   public void setPath(@SuppressWarnings("unused") File path) { }
 
   public void readExternal(@NotNull Document document, @NotNull URL url, @NotNull JDOMXIncluder.PathResolver pathResolver) throws InvalidDataException {
@@ -170,15 +181,17 @@ public class IdeaPluginDescriptorImpl implements IdeaPluginDescriptor {
 
   // used in upsource
   protected void readExternal(@NotNull Element element) {
-    final PluginBean pluginBean = XmlSerializer.deserialize(element, PluginBean.class);
-    url = pluginBean.url;
-    myName = pluginBean.name;
-    String idString = pluginBean.id;
-    if (idString == null || idString.isEmpty()) {
-      idString = myName;
-    }
-    myId = idString == null ? null : PluginId.getId(idString);
+    PluginBean pluginBean = XmlSerializer.deserialize(element, PluginBean.class);
+    myUrl = pluginBean.url;
 
+    String idString = StringUtil.nullize(pluginBean.id, true);
+    String nameString = StringUtil.nullize(pluginBean.name, true);
+    myId = idString != null ? PluginId.getId(idString) : nameString != null ? PluginId.getId(nameString) : null;
+    myName = ObjectUtils.chooseNotNull(nameString, idString);
+
+    myProductCode = pluginBean.productCode;
+    myReleaseDate = parseReleaseDate(pluginBean);
+    myReleaseVersion = pluginBean.releaseVersion;
     String internalVersionString = pluginBean.formatVersion;
     if (internalVersionString != null) {
       try {
@@ -221,12 +234,12 @@ public class IdeaPluginDescriptorImpl implements IdeaPluginDescriptor {
       myOptionalConfigs = new THashMap<>();
       for (PluginDependency dependency : pluginBean.dependencies) {
         String text = dependency.pluginId;
-        if (!StringUtil.isEmpty(text)) {
+        if (!StringUtil.isEmptyOrSpaces(text)) {
           PluginId id = PluginId.getId(text);
           dependentPlugins.add(id);
           if (dependency.optional) {
             optionalDependentPlugins.add(id);
-            if (!StringUtil.isEmpty(dependency.configFile)) {
+            if (!StringUtil.isEmptyOrSpaces(dependency.configFile)) {
               myOptionalConfigs.computeIfAbsent(id, it -> new SmartList<>()).add(dependency.configFile);
             }
           }
@@ -282,6 +295,20 @@ public class IdeaPluginDescriptorImpl implements IdeaPluginDescriptor {
     }
   }
 
+  @Nullable
+  private static Date parseReleaseDate(PluginBean bean) {
+    final String dateStr = bean.releaseDate;
+    if (dateStr != null) {
+      try {
+        return new SimpleDateFormat("yyyyMMdd", Locale.US).parse(dateStr);
+      }
+      catch (ParseException e) {
+        LOG.info("Error parse release date from plugin descriptor for plugin " + bean.name + " {" + bean.id + "}: " + e.getMessage());
+      }
+    }
+    return null;
+  }
+
   public static final Pattern EXPLICIT_BIG_NUMBER_PATTERN = Pattern.compile("(.*)\\.(9{4,}+|10{4,}+)");
 
   /**
@@ -330,6 +357,22 @@ public class IdeaPluginDescriptorImpl implements IdeaPluginDescriptor {
   @Override
   public String getName() {
     return myName;
+  }
+
+  @Nullable
+  @Override
+  public String getProductCode() {
+    return myProductCode;
+  }
+
+  @Nullable
+  @Override
+  public Date getReleaseDate() {
+    return myReleaseDate;
+  }
+
+  public int getReleaseVersion() {
+    return myReleaseVersion;
   }
 
   @Override
@@ -462,12 +505,12 @@ public class IdeaPluginDescriptorImpl implements IdeaPluginDescriptor {
 
   @Override
   public String getUrl() {
-    return url;
+    return myUrl;
   }
 
   public void setUrl( final String val )
   {
-    url = val;
+    myUrl = val;
   }
 
   @Override
@@ -514,13 +557,9 @@ public class IdeaPluginDescriptorImpl implements IdeaPluginDescriptor {
   }
 
   /** @deprecated doesn't make sense for installed plugins; use PluginNode#getDownloads (to be removed in IDEA 2019) */
+  @Deprecated
   public String getDownloads() {
     return null;
-  }
-
-  /** @deprecated doesn't make sense for installed plugins; use PluginNode#getDate (to be removed in IDEA 2019) */
-  public long getDate() {
-    return 0;
   }
 
   @Override

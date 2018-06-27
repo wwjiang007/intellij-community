@@ -106,8 +106,9 @@ public class NanoXmlUtil {
       try {
         parser.parse();
       }
+      catch (ParserStoppedXmlException ignore) {
+      }
       catch (XMLException e) {
-        if (e.getException() instanceof ParserStoppedXmlException) return;
         LOG.debug(e);
       }
     }
@@ -140,18 +141,6 @@ public class NanoXmlUtil {
     }
     finally {
       stream.close();
-    }
-  }
-
-  @Deprecated  // TODO: remove
-  @NotNull
-  public static XmlFileHeader parseHeader(final InputStream inputStream) {
-    try {
-      return parseHeader(new MyXMLReader(inputStream));
-    }
-    catch (IOException e) {
-      LOG.error(e);
-      return null;
     }
   }
 

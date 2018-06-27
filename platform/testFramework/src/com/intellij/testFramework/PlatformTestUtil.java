@@ -33,7 +33,10 @@ import com.intellij.openapi.paths.WebReference;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.project.ex.ProjectManagerEx;
 import com.intellij.openapi.ui.Queryable;
-import com.intellij.openapi.util.*;
+import com.intellij.openapi.util.ActionCallback;
+import com.intellij.openapi.util.Comparing;
+import com.intellij.openapi.util.Disposer;
+import com.intellij.openapi.util.SystemInfo;
 import com.intellij.openapi.util.io.FileUtil;
 import com.intellij.openapi.util.io.FileUtilRt;
 import com.intellij.openapi.util.text.StringUtil;
@@ -50,14 +53,12 @@ import com.intellij.ui.tree.AsyncTreeModel;
 import com.intellij.util.*;
 import com.intellij.util.concurrency.AppExecutorUtil;
 import com.intellij.util.concurrency.AppScheduledExecutorService;
-import com.intellij.util.io.ZipUtil;
+import com.intellij.util.io.Decompressor;
 import com.intellij.util.ref.GCUtil;
 import com.intellij.util.ui.UIUtil;
 import com.intellij.util.ui.tree.TreeUtil;
 import gnu.trove.Equality;
 import junit.framework.AssertionFailedError;
-import org.jdom.Element;
-import org.jdom.JDOMException;
 import org.jetbrains.annotations.Contract;
 import org.jetbrains.annotations.NonNls;
 import org.jetbrains.annotations.NotNull;
@@ -671,24 +672,24 @@ public class PlatformTestUtil {
     return map;
   }
 
-  public static void assertDirectoriesEqual(VirtualFile dirAfter, VirtualFile dirBefore) throws IOException {
-    assertDirectoriesEqual(dirAfter, dirBefore, null);
+  public static void assertDirectoriesEqual(VirtualFile dirExpected, VirtualFile dirActual) throws IOException {
+    assertDirectoriesEqual(dirExpected, dirActual, null);
   }
 
   @SuppressWarnings("UnsafeVfsRecursion")
-  public static void assertDirectoriesEqual(VirtualFile dirAfter, VirtualFile dirBefore, @Nullable VirtualFileFilter fileFilter) throws IOException {
+  public static void assertDirectoriesEqual(VirtualFile dirExpected, VirtualFile dirActual, @Nullable VirtualFileFilter fileFilter) throws IOException {
     FileDocumentManager.getInstance().saveAllDocuments();
 
-    VirtualFile[] childrenAfter = dirAfter.getChildren();
+    VirtualFile[] childrenAfter = dirExpected.getChildren();
 
-    if (dirAfter.isInLocalFileSystem() && dirAfter.getFileSystem() != TempFileSystem.getInstance()) {
-      File[] ioAfter = new File(dirAfter.getPath()).listFiles();
+    if (dirExpected.isInLocalFileSystem() && dirExpected.getFileSystem() != TempFileSystem.getInstance()) {
+      File[] ioAfter = new File(dirExpected.getPath()).listFiles();
       shallowCompare(childrenAfter, ioAfter);
     }
 
-    VirtualFile[] childrenBefore = dirBefore.getChildren();
-    if (dirBefore.isInLocalFileSystem() && dirBefore.getFileSystem() != TempFileSystem.getInstance()) {
-      File[] ioBefore = new File(dirBefore.getPath()).listFiles();
+    VirtualFile[] childrenBefore = dirActual.getChildren();
+    if (dirActual.isInLocalFileSystem() && dirActual.getFileSystem() != TempFileSystem.getInstance()) {
+      File[] ioBefore = new File(dirActual.getPath()).listFiles();
       shallowCompare(childrenBefore, ioBefore);
     }
 
@@ -697,7 +698,7 @@ public class PlatformTestUtil {
 
     Set<String> keySetAfter = mapAfter.keySet();
     Set<String> keySetBefore = mapBefore.keySet();
-    assertEquals(dirAfter.getPath(), keySetAfter, keySetBefore);
+    assertEquals(dirExpected.getPath(), keySetAfter, keySetBefore);
 
     for (String name : keySetAfter) {
       VirtualFile fileAfter = mapAfter.get(name);
@@ -737,41 +738,41 @@ public class PlatformTestUtil {
     return buf.toString();
   }
 
-  public static void assertFilesEqual(VirtualFile fileAfter, VirtualFile fileBefore) throws IOException {
+  public static void assertFilesEqual(VirtualFile fileExpected, VirtualFile fileActual) throws IOException {
     try {
-      assertJarFilesEqual(VfsUtilCore.virtualToIoFile(fileAfter), VfsUtilCore.virtualToIoFile(fileBefore));
+      assertJarFilesEqual(VfsUtilCore.virtualToIoFile(fileExpected), VfsUtilCore.virtualToIoFile(fileActual));
     }
     catch (IOException e) {
       FileDocumentManager manager = FileDocumentManager.getInstance();
 
-      Document docBefore = manager.getDocument(fileBefore);
-      boolean canLoadBeforeText = !fileBefore.getFileType().isBinary() || fileBefore.getFileType() == FileTypes.UNKNOWN;
+      Document docBefore = manager.getDocument(fileActual);
+      boolean canLoadBeforeText = !fileActual.getFileType().isBinary() || fileActual.getFileType() == FileTypes.UNKNOWN;
       String textB = docBefore != null
                      ? docBefore.getText()
                      : !canLoadBeforeText
                        ? null
-                       : LoadTextUtil.getTextByBinaryPresentation(fileBefore.contentsToByteArray(false), fileBefore).toString();
+                       : LoadTextUtil.getTextByBinaryPresentation(fileActual.contentsToByteArray(false), fileActual).toString();
 
-      Document docAfter = manager.getDocument(fileAfter);
-      boolean canLoadAfterText = !fileBefore.getFileType().isBinary() || fileBefore.getFileType() == FileTypes.UNKNOWN;
+      Document docAfter = manager.getDocument(fileExpected);
+      boolean canLoadAfterText = !fileActual.getFileType().isBinary() || fileActual.getFileType() == FileTypes.UNKNOWN;
       String textA = docAfter != null
                      ? docAfter.getText()
                      : !canLoadAfterText
                        ? null
-                       : LoadTextUtil.getTextByBinaryPresentation(fileAfter.contentsToByteArray(false), fileAfter).toString();
+                       : LoadTextUtil.getTextByBinaryPresentation(fileExpected.contentsToByteArray(false), fileExpected).toString();
 
       if (textA != null && textB != null) {
         if (!StringUtil.equals(textA, textB)) {
-          throw new FileComparisonFailure("Text mismatch in file " + fileBefore.getName(), textA, textB, fileAfter.getPath());
+          throw new FileComparisonFailure("Text mismatch in file " + fileExpected.getName(), textA, textB, fileExpected.getPath());
         }
       }
       else {
-        Assert.assertArrayEquals(fileAfter.getPath(), fileAfter.contentsToByteArray(), fileBefore.contentsToByteArray());
+        Assert.assertArrayEquals(fileExpected.getPath(), fileExpected.contentsToByteArray(), fileActual.contentsToByteArray());
       }
     }
   }
 
-  public static void assertJarFilesEqual(File file1, File file2) throws IOException {
+  private static void assertJarFilesEqual(File file1, File file2) throws IOException {
     final File tempDir = FileUtilRt.createTempDirectory("assert_jar_tmp", null, false);
     try {
       final File tempDirectory1 = new File(tempDir, "tmp1");
@@ -781,8 +782,8 @@ public class PlatformTestUtil {
 
       try (JarFile jarFile1 = new JarFile(file1)) {
         try (JarFile jarFile2 = new JarFile(file2)) {
-          ZipUtil.extract(jarFile1, tempDirectory1, null);
-          ZipUtil.extract(jarFile2, tempDirectory2, null);
+          new Decompressor.Zip(new File(jarFile1.getName())).extract(tempDirectory1);
+          new Decompressor.Zip(new File(jarFile2.getName())).extract(tempDirectory2);
         }
       }
 
@@ -798,31 +799,6 @@ public class PlatformTestUtil {
     }
     finally {
       FileUtilRt.delete(tempDir);
-    }
-  }
-
-  /**
-   * @deprecated Use com.intellij.testFramework.assertions.Assertions.assertThat().isEqualTo()
-   */
-  @SuppressWarnings("unused")
-  @Deprecated
-  public static void assertElementsEqual(final Element expected, final Element actual) {
-    if (!JDOMUtil.areElementsEqual(expected, actual)) {
-      assertEquals(JDOMUtil.writeElement(expected), JDOMUtil.writeElement(actual));
-    }
-  }
-
-  /**
-   * @deprecated Use com.intellij.testFramework.assertions.Assertions.assertThat().isEqualTo()
-   */
-  @SuppressWarnings("unused")
-  @Deprecated
-  public static void assertElementEquals(final String expected, final Element actual) {
-    try {
-      assertElementsEqual(JdomKt.loadElement(expected), actual);
-    }
-    catch (IOException | JDOMException e) {
-      throw new AssertionError(e);
     }
   }
 

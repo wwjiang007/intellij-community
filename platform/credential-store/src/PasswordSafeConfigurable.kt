@@ -57,8 +57,9 @@ internal class PasswordSafeConfigurableUi : ConfigurableUi<PasswordSafeSettings>
       else -> throw IllegalStateException("Unknown provider type: ${settings.providerType}")
     }
 
-    val currentProvider = (PasswordSafe.getInstance() as PasswordSafeImpl).currentProvider
-    keePassDbFile.text = settings.keepassDb ?: if (currentProvider is KeePassCredentialStore) currentProvider.dbFile.toString() else getDefaultKeePassDbFilePath()
+    val currentProvider = (PasswordSafe.instance as PasswordSafeImpl).currentProvider
+    @Suppress("IfThenToElvis")
+    keePassDbFile.text = settings.state.keepassDb ?: if (currentProvider is KeePassCredentialStore) currentProvider.dbFile.toString() else getDefaultKeePassDbFilePath()
     updateEnabledState()
   }
 
@@ -73,7 +74,7 @@ internal class PasswordSafeConfigurableUi : ConfigurableUi<PasswordSafeSettings>
       }
 
       getCurrentDbFile()?.let {
-        val passwordSafe = PasswordSafe.getInstance() as PasswordSafeImpl
+        val passwordSafe = PasswordSafe.instance as PasswordSafeImpl
         if ((passwordSafe.currentProvider as KeePassCredentialStore).dbFile != it) {
           return true
         }
@@ -84,7 +85,7 @@ internal class PasswordSafeConfigurableUi : ConfigurableUi<PasswordSafeSettings>
 
   override fun apply(settings: PasswordSafeSettings) {
     val providerType = getProviderType()
-    val passwordSafe = PasswordSafe.getInstance() as PasswordSafeImpl
+    val passwordSafe = PasswordSafe.instance as PasswordSafeImpl
     var provider = passwordSafe.currentProvider
 
     val masterPassword = keePassMasterPassword.chars.toString().nullize(true)?.toByteArray()
@@ -126,10 +127,10 @@ internal class PasswordSafeConfigurableUi : ConfigurableUi<PasswordSafeSettings>
 
     settings.providerType = providerType
     if (newProvider is KeePassCredentialStore) {
-      settings.keepassDb = newProvider.dbFile.toString()
+      settings.state.keepassDb = newProvider.dbFile.toString()
     }
     else {
-      settings.keepassDb = null
+      settings.state.keepassDb = null
     }
     passwordSafe.currentProvider = newProvider
   }
@@ -141,7 +142,7 @@ internal class PasswordSafeConfigurableUi : ConfigurableUi<PasswordSafeSettings>
   }
 
   override fun getComponent(): JPanel {
-    val passwordSafe = PasswordSafe.getInstance() as PasswordSafeImpl
+    val passwordSafe = PasswordSafe.instance as PasswordSafeImpl
 
     keePassMasterPassword.setPasswordIsStored(true)
 
@@ -201,20 +202,17 @@ internal class PasswordSafeConfigurableUi : ConfigurableUi<PasswordSafeSettings>
             )
           }
           row("Master Password:") {
-            keePassMasterPassword(growPolicy = GrowPolicy.SHORT_TEXT)
-          }
-          if (!SystemInfo.isWindows) {
-            row { hint("Stored using weak encryption. It is recommended to store on encrypted volume for additional security.") }
+            keePassMasterPassword(comment = if (SystemInfo.isWindows) null else "Stored using weak encryption. It is recommended to store on encrypted volume for additional security.")
           }
         }
 
         row {
-          rememberPasswordsUntilClosing()
-        }
-
-        val currentProvider = passwordSafe.currentProvider
-        if (currentProvider is KeePassCredentialStore && !currentProvider.memoryOnly) {
-          row { hint("Existing KeePass file will be removed.") }
+          var comment: String? = null
+          val currentProvider = passwordSafe.currentProvider
+          if (currentProvider is KeePassCredentialStore && !currentProvider.memoryOnly) {
+            comment = "Existing KeePass file will be removed."
+          }
+          rememberPasswordsUntilClosing(comment = comment)
         }
       }
     }

@@ -27,6 +27,7 @@ import com.intellij.openapi.externalSystem.model.ProjectKeys;
 import com.intellij.openapi.externalSystem.model.project.*;
 import com.intellij.openapi.externalSystem.model.task.ExternalSystemTaskId;
 import com.intellij.openapi.externalSystem.model.task.TaskData;
+import com.intellij.openapi.externalSystem.rt.execution.ForkedDebuggerConfiguration;
 import com.intellij.openapi.externalSystem.service.notification.ExternalSystemNotificationManager;
 import com.intellij.openapi.externalSystem.service.notification.NotificationCategory;
 import com.intellij.openapi.externalSystem.service.notification.NotificationData;
@@ -57,7 +58,6 @@ import org.jetbrains.annotations.NonNls;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.plugins.gradle.model.*;
-import org.jetbrains.plugins.gradle.model.data.BuildScriptClasspathData;
 import org.jetbrains.plugins.gradle.model.data.GradleSourceSetData;
 import org.jetbrains.plugins.gradle.service.project.data.ExternalProjectDataService;
 import org.jetbrains.plugins.gradle.service.project.data.GradleExtensionsDataService;
@@ -78,7 +78,6 @@ import static com.intellij.openapi.util.Pair.pair;
 import static org.jetbrains.plugins.gradle.service.project.GradleProjectResolver.CONFIGURATION_ARTIFACTS;
 import static org.jetbrains.plugins.gradle.service.project.GradleProjectResolver.MODULES_OUTPUTS;
 import static org.jetbrains.plugins.gradle.service.project.GradleProjectResolverUtil.*;
-import static org.jetbrains.plugins.gradle.service.task.GradleTaskManager.getForkedDebuggerSetup;
 
 /**
  * {@link BaseGradleProjectResolverExtension} provides base implementation of Gradle project resolver.
@@ -154,7 +153,7 @@ public class BaseGradleProjectResolverExtension implements GradleProjectResolver
         mainModuleData.setIdeModuleGroup(isRootModule ? null : moduleGroup);
       }
 
-      for (ExternalSourceSet sourceSet : externalProject.getSourceSets().values()) {
+      for (ExternalSourceSet sourceSet: externalProject.getSourceSets().values()) {
         final String moduleId = getModuleId(resolverCtx, gradleModule, sourceSet);
         final String moduleExternalName = gradleModule.getName() + ":" + sourceSet.getName();
         final String moduleInternalName = getInternalModuleName(gradleModule, externalProject, sourceSet.getName(), resolverCtx);
@@ -208,14 +207,15 @@ public class BaseGradleProjectResolverExtension implements GradleProjectResolver
         assert sourceSetMap != null;
         sourceSetMap.put(moduleId, Pair.create(sourceSetDataNode, sourceSet));
       }
-    } else {
+    }
+    else {
       try {
         IdeaJavaLanguageSettings languageSettings = gradleModule.getJavaLanguageSettings();
-        if(languageSettings != null) {
-          if(languageSettings.getLanguageLevel() != null) {
+        if (languageSettings != null) {
+          if (languageSettings.getLanguageLevel() != null) {
             mainModuleData.setSourceCompatibility(languageSettings.getLanguageLevel().toString());
           }
-          if(languageSettings.getTargetBytecodeVersion() != null) {
+          if (languageSettings.getTargetBytecodeVersion() != null) {
             mainModuleData.setTargetCompatibility(languageSettings.getTargetBytecodeVersion().toString());
           }
         }
@@ -272,11 +272,11 @@ public class BaseGradleProjectResolverExtension implements GradleProjectResolver
       processSourceSets(resolverCtx, gradleModule, externalProject, ideModule, new SourceSetsProcessor() {
         @Override
         public void process(@NotNull DataNode<? extends ModuleData> dataNode, @NotNull ExternalSourceSet sourceSet) {
-          for (Map.Entry<IExternalSystemSourceType, ExternalSourceDirectorySet> directorySetEntry : sourceSet.getSources().entrySet()) {
+          for (Map.Entry<IExternalSystemSourceType, ExternalSourceDirectorySet> directorySetEntry: sourceSet.getSources().entrySet()) {
             ExternalSystemSourceType sourceType = ExternalSystemSourceType.from(directorySetEntry.getKey());
             ExternalSourceDirectorySet sourceDirectorySet = directorySetEntry.getValue();
 
-            for (File file : sourceDirectorySet.getSrcDirs()) {
+            for (File file: sourceDirectorySet.getSrcDirs()) {
               ContentRootData ideContentRoot = new ContentRootData(GradleConstants.SYSTEM_ID, file.getAbsolutePath());
               ideContentRoot.storePath(sourceType, file.getAbsolutePath());
               dataNode.createChild(ProjectKeys.CONTENT_ROOT, ideContentRoot);
@@ -290,7 +290,7 @@ public class BaseGradleProjectResolverExtension implements GradleProjectResolver
     if (contentRoots == null) {
       return;
     }
-    for (IdeaContentRoot gradleContentRoot : contentRoots) {
+    for (IdeaContentRoot gradleContentRoot: contentRoots) {
       if (gradleContentRoot == null) continue;
 
       File rootDirectory = gradleContentRoot.getRootDirectory();
@@ -310,7 +310,7 @@ public class BaseGradleProjectResolverExtension implements GradleProjectResolver
 
       Set<File> excluded = gradleContentRoot.getExcludeDirectories();
       if (excluded != null) {
-        for (File file : excluded) {
+        for (File file: excluded) {
           ideContentRoot.storePath(ExternalSystemSourceType.EXCLUDED, file.getAbsolutePath());
         }
       }
@@ -324,11 +324,11 @@ public class BaseGradleProjectResolverExtension implements GradleProjectResolver
                                         @NotNull DataNode<ModuleData> ideModule,
                                         @NotNull SourceSetsProcessor processor) {
     Map<String, DataNode<GradleSourceSetData>> sourceSetsMap = ContainerUtil.newHashMap();
-    for (DataNode<GradleSourceSetData> dataNode : ExternalSystemApiUtil.findAll(ideModule, GradleSourceSetData.KEY)) {
+    for (DataNode<GradleSourceSetData> dataNode: ExternalSystemApiUtil.findAll(ideModule, GradleSourceSetData.KEY)) {
       sourceSetsMap.put(dataNode.getData().getId(), dataNode);
     }
 
-    for (ExternalSourceSet sourceSet : externalProject.getSourceSets().values()) {
+    for (ExternalSourceSet sourceSet: externalProject.getSourceSets().values()) {
       if (sourceSet == null || sourceSet.getSources().isEmpty()) continue;
 
       final String moduleId = getModuleId(resolverCtx, gradleModule, sourceSet);
@@ -362,7 +362,7 @@ public class BaseGradleProjectResolverExtension implements GradleProjectResolver
             gradleOutputMap = MultiMap.create();
             dataNode.putUserData(GradleProjectResolver.GRADLE_OUTPUTS, gradleOutputMap);
           }
-          for (Map.Entry<IExternalSystemSourceType, ExternalSourceDirectorySet> directorySetEntry : sourceSet.getSources().entrySet()) {
+          for (Map.Entry<IExternalSystemSourceType, ExternalSourceDirectorySet> directorySetEntry: sourceSet.getSources().entrySet()) {
             ExternalSystemSourceType sourceType = ExternalSystemSourceType.from(directorySetEntry.getKey());
             ExternalSourceDirectorySet sourceDirectorySet = directorySetEntry.getValue();
             final ModuleData moduleData = dataNode.getData();
@@ -371,10 +371,10 @@ public class BaseGradleProjectResolverExtension implements GradleProjectResolver
             moduleData.setCompileOutputPath(sourceType, outputDir.getAbsolutePath());
             moduleData.setInheritProjectCompileOutputPath(sourceDirectorySet.isCompilerOutputPathInherited());
 
-            for (File gradleOutputDir : sourceDirectorySet.getGradleOutputDirs()) {
+            for (File gradleOutputDir: sourceDirectorySet.getGradleOutputDirs()) {
               String gradleOutputPath = ExternalSystemApiUtil.toCanonicalPath(gradleOutputDir.getAbsolutePath());
               gradleOutputMap.putValue(sourceType, gradleOutputPath);
-              if(!gradleOutputDir.getPath().equals(outputDir.getPath())) {
+              if (!gradleOutputDir.getPath().equals(outputDir.getPath())) {
                 moduleOutputsMap.put(gradleOutputPath, Pair.create(moduleData.getId(), sourceType));
               }
             }
@@ -409,7 +409,7 @@ public class BaseGradleProjectResolverExtension implements GradleProjectResolver
       }
     }
 
-    for (Map.Entry<ExternalSystemSourceType, File> sourceTypeFileEntry : compileOutputPaths.entrySet()) {
+    for (Map.Entry<ExternalSystemSourceType, File> sourceTypeFileEntry: compileOutputPaths.entrySet()) {
       final File outputPath = sourceTypeFileEntry.getValue();
       if (outputPath != null) {
         moduleData.setCompileOutputPath(sourceTypeFileEntry.getKey(), outputPath.getAbsolutePath());
@@ -472,7 +472,7 @@ public class BaseGradleProjectResolverExtension implements GradleProjectResolver
     List<String> orphanModules = ContainerUtil.newArrayList();
     Map<String, ModuleData> modulesIndex = ContainerUtil.newHashMap();
 
-    for (DataNode<ModuleData> dataNode : ExternalSystemApiUtil.getChildren(ideProject, ProjectKeys.MODULE)) {
+    for (DataNode<ModuleData> dataNode: ExternalSystemApiUtil.getChildren(ideProject, ProjectKeys.MODULE)) {
       modulesIndex.put(dataNode.getData().getExternalName(), dataNode.getData());
     }
 
@@ -546,7 +546,7 @@ public class BaseGradleProjectResolverExtension implements GradleProjectResolver
 
     final boolean isFlatProject = !FileUtil.isAncestor(rootProjectPath, moduleConfigPath, false);
     if (externalProject != null) {
-      for (ExternalTask task : externalProject.getTasks().values()) {
+      for (ExternalTask task: externalProject.getTasks().values()) {
         String taskName = isFlatProject ? task.getQName() : task.getName();
         String taskGroup = task.getGroup();
         if (taskName.trim().isEmpty() || isIdeaTask(taskName, taskGroup)) {
@@ -564,7 +564,7 @@ public class BaseGradleProjectResolverExtension implements GradleProjectResolver
       return tasks;
     }
 
-    for (GradleTask task : gradleModule.getGradleProject().getTasks()) {
+    for (GradleTask task: gradleModule.getGradleProject().getTasks()) {
       String taskName = task.getName();
       String taskGroup = getTaskGroup(task);
       if (taskName == null || taskName.trim().isEmpty() || isIdeaTask(taskName, taskGroup)) {
@@ -673,9 +673,9 @@ public class BaseGradleProjectResolverExtension implements GradleProjectResolver
                                     @Nullable String jvmAgentSetup,
                                     @NotNull Consumer<String> initScriptConsumer) {
     if (!StringUtil.isEmpty(jvmAgentSetup)) {
-      int debugPort = getForkedDebuggerSetup(jvmAgentSetup);
-      if (debugPort != -1) {
-        setupDebugForAllJvmForkedTasks(initScriptConsumer, debugPort);
+      ForkedDebuggerConfiguration forkedDebuggerSetup = ForkedDebuggerConfiguration.parse(jvmAgentSetup);
+      if (forkedDebuggerSetup != null) {
+        setupDebugForAllJvmForkedTasks(initScriptConsumer, forkedDebuggerSetup.getForkSocketPort());
       }
       else {
         final String names = "[\"" + StringUtil.join(taskNames, "\", \"") + "\"]";
@@ -704,6 +704,10 @@ public class BaseGradleProjectResolverExtension implements GradleProjectResolver
       "  }",
       "}",
       "gradle.taskGraph.beforeTask { Task task ->",
+      " if (task instanceof org.gradle.api.tasks.testing.Test) {",
+      "  task.maxParallelForks = 1",
+      "  task.forkEvery = 0",
+      " }",
       " if (task instanceof JavaForkOptions) {",
       "  def jvmArgs = task.jvmArgs.findAll{!it?.startsWith('-agentlib:jdwp') && !it?.startsWith('-Xrunjdwp')}",
       "  jvmArgs << com.intellij.openapi.externalSystem.rt.execution.ForkedDebuggerHelper.setupDebugger(task.path, " + debugPort + ")",
@@ -740,7 +744,7 @@ public class BaseGradleProjectResolverExtension implements GradleProjectResolver
     if (dirs == null) {
       return;
     }
-    for (IdeaSourceDirectory dir : dirs) {
+    for (IdeaSourceDirectory dir: dirs) {
       ExternalSystemSourceType dirSourceType = type;
       try {
         if (dir.isGenerated() && !dirSourceType.isGenerated()) {
@@ -770,7 +774,7 @@ public class BaseGradleProjectResolverExtension implements GradleProjectResolver
     final Class<?> aClass = obj.getClass();
     LOG.debug(String.format("obj class: %s", aClass));
     LOG.debug(String.format("classloader: %s", aClass.getClassLoader()));
-    for (Method m : aClass.getDeclaredMethods()) {
+    for (Method m: aClass.getDeclaredMethods()) {
       LOG.debug(String.format("obj m: %s", m));
     }
 
@@ -785,7 +789,7 @@ public class BaseGradleProjectResolverExtension implements GradleProjectResolver
         LOG.debug(String.format("delegate: %s", delegate));
         LOG.debug(String.format("delegate class: %s", delegate.getClass()));
         LOG.debug(String.format("delegate classloader: %s", delegate.getClass().getClassLoader()));
-        for (Method m : delegate.getClass().getDeclaredMethods()) {
+        for (Method m: delegate.getClass().getDeclaredMethods()) {
           LOG.debug(String.format("delegate m: %s", m));
         }
       }
@@ -804,7 +808,7 @@ public class BaseGradleProjectResolverExtension implements GradleProjectResolver
     if (scopeAsString == null) {
       return null;
     }
-    for (DependencyScope dependencyScope : DependencyScope.values()) {
+    for (DependencyScope dependencyScope: DependencyScope.values()) {
       if (scopeAsString.equalsIgnoreCase(dependencyScope.toString())) {
         return dependencyScope;
       }
@@ -816,7 +820,7 @@ public class BaseGradleProjectResolverExtension implements GradleProjectResolver
   private static ModuleDependencyData buildDependency(@NotNull ProjectResolverContext resolverContext,
                                                       @NotNull DataNode<ModuleData> ownerModule,
                                                       @NotNull IdeaModuleDependency dependency,
-                                                      @NotNull Map<String, ModuleData>  registeredModulesIndex)
+                                                      @NotNull Map<String, ModuleData> registeredModulesIndex)
     throws IllegalStateException {
 
     final GradleExecutionSettings gradleExecutionSettings = resolverContext.getSettings();
@@ -870,8 +874,8 @@ public class BaseGradleProjectResolverExtension implements GradleProjectResolver
     }
 
     String libraryName;
+    LibraryLevel level;
     final GradleModuleVersion moduleVersion = dependency.getGradleModuleVersion();
-    final LibraryLevel level;
 
     // Gradle API doesn't explicitly provide information about unresolved libraries (http://issues.gradle.org/browse/GRADLE-1995).
     // That's why we use this dirty hack here.
@@ -882,12 +886,14 @@ public class BaseGradleProjectResolverExtension implements GradleProjectResolver
         boolean isModuleLocalLibrary = false;
         try {
           isModuleLocalLibrary = FileUtil.isAncestor(gradleModule.getGradleProject().getProjectDirectory(), binaryPath, false);
-        } catch (UnsupportedMethodException e) {
+        }
+        catch (UnsupportedMethodException e) {
           // ignore, generate project-level library for the dependency
         }
         if (isModuleLocalLibrary) {
           level = LibraryLevel.MODULE;
-        } else {
+        }
+        else {
           level = LibraryLevel.PROJECT;
         }
 
@@ -945,7 +951,7 @@ public class BaseGradleProjectResolverExtension implements GradleProjectResolver
     }
 
     final LibraryData library = new LibraryData(GradleConstants.SYSTEM_ID, libraryName, unresolved);
-    if(moduleVersion != null) {
+    if (moduleVersion != null) {
       library.setGroup(moduleVersion.getGroup());
       library.setArtifactId(moduleVersion.getName());
       library.setVersion(moduleVersion.getVersion());
@@ -972,8 +978,8 @@ public class BaseGradleProjectResolverExtension implements GradleProjectResolver
       library.addPath(LibraryPathType.DOC, javadocPath.getAbsolutePath());
     }
 
-    if (level == LibraryLevel.PROJECT) {
-      linkProjectLibrary(ideProject, library);
+    if (level == LibraryLevel.PROJECT && !linkProjectLibrary(ideProject, library)) {
+      level = LibraryLevel.MODULE;
     }
 
     return new LibraryDependencyData(ownerModule.getData(), library, level);

@@ -18,7 +18,7 @@ import com.intellij.codeInspection.SuppressIntentionActionFromFix;
 import com.intellij.featureStatistics.FeatureUsageTracker;
 import com.intellij.featureStatistics.FeatureUsageTrackerImpl;
 import com.intellij.injected.editor.EditorWindow;
-import com.intellij.internal.statistic.customUsageCollectors.actions.IntentionsCollector;
+import com.intellij.internal.statistic.collectors.fus.actions.persistence.IntentionsCollector;
 import com.intellij.lang.injection.InjectedLanguageManager;
 import com.intellij.openapi.application.ApplicationManager;
 import com.intellij.openapi.application.TransactionGuard;
@@ -182,7 +182,7 @@ public class ShowIntentionActionsHandler implements CodeInsightActionHandler {
   }
 
   private static void checkPsiTextConsistency(@NotNull PsiFile hostFile) {
-    if (Registry.is("ide.check.psi.text.consistency") ||
+    if (Registry.is("ide.check.stub.text.consistency") ||
         ApplicationManager.getApplication().isUnitTestMode() && !ApplicationInfoImpl.isInStressTest()) {
       if (hostFile.isValid()) {
         StubTextInconsistencyException.checkStubTextConsistency(hostFile);
